@@ -27,8 +27,16 @@ Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 
 
 ### 桌面版（推荐）
 
-下载或克隆后，双击 **`start-desktop.cmd`**。
-首次运行会自动装 Electron（约 300 MB，只需一次），然后开窗口。
+**方式一 · 下载完整包（不用装任何东西）** —— 138 MB，解压即用：
+
+[**下载 v0.10.0**](https://github.com/ekkkcz/Arena-Bridge/releases/latest) → 解压 → 双击 `start-desktop.cmd`
+
+**方式二 · 从源码跑** —— 370 KB，需要 Node.js 18+，首次运行自动装 Electron：
+
+```bash
+git clone https://github.com/ekkkcz/Arena-Bridge.git
+cd Arena-Bridge && start-desktop.cmd
+```
 
 等右侧面板出现，点 **一键连接并开工** —— 它把 MCP 地址和连接指令发进当前对话
 （**不新开对话**，所以刚抽到的模型会留着）。Agent 调一次 `get_project_info` 确认后，

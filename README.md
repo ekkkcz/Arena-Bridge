@@ -1,7 +1,11 @@
 # Arena Bridge
 
-把**本机项目**通过 MCP 交给**网页 AI Agent**（Arena / ChatGPT / Qwen Work / Manus…）操作，
-并实时显示这一轮**抽到的真实模型名与思考强度**。
+**把网页版 AI Agent 接到你的本机项目上** —— 它能真的读写文件、跑命令，不只是聊天。
+
+不用买 API、不用订阅：Arena / ChatGPT / Qwen Work / Manus 这些网页 Agent 你本来就能免费用，
+缺的只是「它碰不到你的代码」。这个工具补上这一段。
+
+外加一个别处没有的能力：**看穿这一轮到底是哪个模型在干活**（真实模型名 + 思考强度）。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)
@@ -23,6 +27,10 @@
 
 > 想用命令行装：`npm install` 后双击 `Arena Bridge.vbs`（无黑框）。
 > 访问密钥首次运行自动生成在 `.arena-bridge/config.json`，**不入库**。
+
+**适合**你自己的项目、脚本、调试、原型 —— 有人在旁边看着的活。
+**别拿它跑无人值守的生产负载**：模型每轮随机分配、隧道地址每次重启都变、平台没有 SLA。
+（要稳定跑生产，还是得用官方 API —— 这工具的定位是「先免费用上，再决定要不要买」。）
 
 ### 命令行版
 

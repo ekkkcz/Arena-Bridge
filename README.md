@@ -7,22 +7,12 @@ Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 
 走的是你已有的 Arena 账号。
 
 顺带解决了 Arena 自己不做的一件事：**它不告诉你这一轮用的是哪个模型**。
-这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到想要的旗舰再干活：
+这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到旗舰再干活 ——
+比如 `claude-opus-5`、`claude-fable-5.1`、`gpt-6-astra`，
+实际抽到时名字还带档位后缀（`claude-opus-5-max`、`gpt-6-astra-medium`…）。
 
-| 模型家族 | 厂商 |
-| --- | --- |
-| `claude-opus-5` | Anthropic |
-| `claude-fable-5.1` | Anthropic |
-| `gpt-6-astra` | OpenAI |
-| `gpt-5.6-sol` | OpenAI |
-| `gemini-3.8` | Google |
-| `kimi-k3` | 月之暗面 |
-
-表中是 **Arena 目录里真实存在的基名**（见 `desktop/app/preload.cjs`）；上面这些只是举例，
-名单外的模型一样能识别。实际抽到时名字还会带档位后缀 —— `claude-opus-5-max`、`gpt-6-astra-medium`…
-
-> 识别不依赖模型清单：走通用规则（厂商前缀 + 版本 + 档位）加 run trace，
-> Arena 上新模型、换档位都不用更新这个工具。
+> 这三个只是举例，别家的模型一样能识别。识别走通用规则（厂商前缀 + 版本 + 档位）
+> 加 run trace，不依赖模型清单 —— Arena 上新模型、换档位都不用更新这个工具。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)

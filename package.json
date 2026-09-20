@@ -3,7 +3,7 @@
   "version": "0.10.0",
   "private": true,
   "type": "module",
-  "description": "把本机项目通过 MCP 交给网页 AI Agent，并在浏览器里实时显示抽到的真实模型名。零依赖。",
+  "description": "连接 Arena Agent 与本机项目，支持文件读写、代码搜索和命令执行，并提供模型与推理档位识别、自动抽卡功能。",
   "engines": {
     "node": ">=18"
   },

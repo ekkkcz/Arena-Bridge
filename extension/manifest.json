@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Arena 模型探测器",
   "version": "4.2.0",
-  "description": "在 Arena Agent 模式下实时显示本轮随机抽中的真实模型名与推理信息。单脚本架构，无后台进程，界面跟随 arena.ai 主题。",
+  "description": "识别 Arena Agent 会话中的模型名称与推理档位，标注信息来源和确认状态。单脚本架构，无后台进程，界面跟随 Arena 主题。",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

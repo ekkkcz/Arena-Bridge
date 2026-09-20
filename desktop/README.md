@@ -1,6 +1,10 @@
-# 桌面版（自带浏览器）
+# Arena Bridge 桌面版
 
-不依赖你日常的 Edge / Chrome，用 **Electron**（Chromium 内核，MIT 全开源）开一个独立窗口。
+将 Arena 页面、本地 MCP 服务、连接隧道和操作面板整合在一个窗口中。
+你可以选择本机项目目录、调整读写与执行权限，并查看模型识别和自动抽卡状态。
+
+桌面版使用 **Electron**（Chromium 内核）提供独立浏览器窗口，无需使用日常的 Edge 或 Chrome。
+安装和使用步骤见[项目首页](../README.md#快速开始)。
 
 ## 为什么用 Electron
 

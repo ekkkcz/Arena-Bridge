@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 // 一条命令启动：MCP 服务 + 免费公网隧道，并打印可直接粘贴给网页 AI 的提示词。
 import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/* 版本号只从 package.json 读，避免多处硬编码后对不上 */
+const PKG_VERSION = (() => {
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8"));
+    return pkg.version || "0.0.0";
+  } catch { return "0.0.0"; }
+})();
 import { load, save } from "./lib/config.mjs";
 import { createTools } from "./lib/tools.mjs";
 import { createMcpServer } from "./lib/mcp.mjs";
@@ -33,7 +44,7 @@ const c = {
 const rule = () => console.log(c.dim("─".repeat(74)));
 
 console.log("");
-console.log(c.b("  Arena Bridge") + c.dim("  ·  让网页 AI Agent 直接读写你的本机项目"));
+console.log(c.b("  Arena Bridge") + c.dim("  v" + PKG_VERSION) + c.dim("  ·  让网页 AI Agent 直接读写你的本机项目"));
 rule();
 console.log("  项目目录   " + c.cy(cfg.projectDir));
 console.log("  权限       " + (cfg.allowWrite ? c.g("读 + 写") : c.y("只读")) +

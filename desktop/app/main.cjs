@@ -34,6 +34,11 @@ const ROOT = path.resolve(__dirname, "..", "..");
 /* 窗口/任务栏图标。不设它的话，任务栏会用 electron.exe 自带的图标（那个原子球），
    看起来和我们这个程序完全没关系。必须给绝对路径，且 app.ico 是 7 帧多尺寸。 */
 const APP_ICON = path.join(ROOT, "app.ico");
+/* 版本号单一来源：package.json。面板与 MCP serverInfo 都用它。 */
+const APP_VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "0.0.0"; }
+  catch (e) { return "0.0.0"; }
+})();
 const CFG_DIR = path.join(ROOT, ".arena-bridge");
 const CFG_FILE = path.join(CFG_DIR, "config.json");
 const LOG = path.join(CFG_DIR, "desktop.log");
@@ -168,7 +173,7 @@ function startMcp(onLog) {
 
   async function dispatch(m) {
     const { id, method, params } = m || {};
-    if (method === "initialize") return okR(id, { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "arena-bridge", version: "1.1.0" } });
+    if (method === "initialize") return okR(id, { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "arena-bridge", version: APP_VERSION } });
     if (method === "notifications/initialized" || method === "notifications/cancelled") return null;
     if (method === "ping") return okR(id, {});
     if (method === "tools/list") return okR(id, { tools: mcpTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
@@ -377,7 +382,7 @@ function pushStatus() {
       port: cfg.port, token: cfg.token, projectDir: cfg.projectDir,
       allowWrite: cfg.allowWrite, allowExec: cfg.allowExec,
       tools: mcpTools.map((t) => t.name), publicUrl, tunnelState,
-      seedModels, stats: mcpStats,
+      seedModels, stats: mcpStats, version: APP_VERSION,
     });
   } catch (e) { say("推送状态失败: " + e.message); }
 }

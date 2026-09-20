@@ -239,7 +239,9 @@ function css(t) {
     ".dot.warn{background:hsl(var(--ab-warn))}",
     ".dot.live{background:hsl(var(--ab-ok));animation:ab-p 1.4s ease-in-out infinite}",
     "@keyframes ab-p{0%,100%{opacity:1}50%{opacity:.3}}",
-    ".ttl{flex:1;font-size:11.5px;font-weight:600;letter-spacing:-.01em}",
+    ".ttl{font-size:11.5px;font-weight:600;letter-spacing:-.01em}",
+    ".ver{font-size:9.5px;font-weight:500;color:hsl(var(--ab-muted));letter-spacing:.02em;margin-left:1px}",
+    ".hd .sp{flex:1}",
     ".x{cursor:pointer;color:hsl(var(--ab-muted));padding:1px 3px;border-radius:4px;",
     "font-size:13px;line-height:1;user-select:none}",
     ".x:hover{background:hsl(var(--ab-surface3));color:hsl(var(--ab-text))}",
@@ -362,6 +364,7 @@ function build() {
     '<div class="body">' +
       '<div class="hd"><span class="dot" id="hdot"></span>' +
       '<span class="ttl">Arena Bridge</span>' +
+      '<span class="ver" id="ver"></span><span class="sp"></span>' +
       '<span class="x" id="collapse" title="收起">\u203a</span></div>' +
 
       '<div class="sec"><div class="lbl" id="mlblTop">本轮模型</div>' +
@@ -1168,6 +1171,7 @@ function render() {
     else { cls = "model none"; txt = p.state === "polling" ? "识别中\u2026" : p.state === "nologin" ? "需要登录" : "尚未开始"; }
     setCls(sh, "model", cls); setText(sh, "model", txt);
   }
+  setText(sh, "ver", (status && status.version) ? "v" + status.version : "");
   setText(sh, "mlblTop", histName ? "上轮模型" : "本轮模型");
   setText(sh, "mhint", histName
     ? "这条对话上次检测到的 · 发一条消息可重新确认"

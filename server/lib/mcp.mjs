@@ -18,7 +18,7 @@ export function createMcpServer({ tools, token, port, host = "127.0.0.1", onLog 
       return rpcOk(id, {
         protocolVersion: "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "arena-bridge", version: "1.0.0" },
+        serverInfo: { name: "arena-bridge", version: "0.10.0" },
       });
     }
     if (method === "notifications/initialized" || method === "notifications/cancelled") return null;

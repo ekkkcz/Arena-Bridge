@@ -7,12 +7,11 @@ Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 
 走的是你已有的 Arena 账号。
 
 顺带解决了 Arena 自己不做的一件事：**它不告诉你这一轮用的是哪个模型**。
-这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到高级模型再干活：
+这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到高级模型再干活 ——
+比如 **Opus 5**、**Astra**、**Fable**。
 
-```
-claude-opus-5-max      gpt-6-astra-max
-claude-fable-5.1-high  gpt-5.6-luna-xhigh
-```
+> 模型名单不写死：识别走通用规则（厂商前缀 + 版本 + 档位后缀）加 run trace，
+> Arena 上新模型、改档位都不用更新这个工具。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)
@@ -99,7 +98,7 @@ Arena 每开新对话就随机分配模型，顶级模型**不可选**，而且*
 
 模型名 `gpt-5.6-sol` **不带**档位后缀，面板仍读出 **XHIGH** —— 来自 run trace 的 span 详情。
 
-抽卡可设轮数（1–200）、目标关键字（`opus,gpt-6`，大小写无关的子串匹配）、命中即停。
+抽卡可设轮数（1–200）、目标关键字（如 `opus,astra,fable`，大小写无关的子串匹配）、命中即停。
 命中后停在那个对话上不切走，直接派活即可。
 
 ---

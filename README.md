@@ -142,7 +142,13 @@ Quick Tunnel 无需单独注册 Cloudflare 账号；使用 Arena 仍需登录你
 
 **如何控制权限？**　连接地址包含访问密钥，请勿公开分享。可以先使用只读模式，再按任务需要开启写入和执行权限。
 
-**需要什么？**　Node.js 18+。cloudflared 可选——没有它就只能本机/局域网用：
+**需要安装哪些依赖？**
+
+- **Windows 完整包**：无需单独安装 Node.js 和 Electron。
+- **从源码启动或使用命令行版**：需要 Node.js 18+。
+- **命令行版的隧道连接**：需要安装 cloudflared；只供本机客户端连接时，可用 `--no-tunnel` 跳过隧道。
+
+Windows 安装 cloudflared 的命令：
 
 ```bash
 winget install --id Cloudflare.cloudflared --exact

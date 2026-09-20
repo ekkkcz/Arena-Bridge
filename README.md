@@ -1,12 +1,18 @@
 # Arena Bridge
 
-把**本机项目**接给**网页 AI Agent**（Arena / ChatGPT / Qwen Work / Manus…），
-让它能像 Codex / Claude Code 那样读写文件、跑命令，而不只是聊天。
+让 **Arena** 里的网页 Agent 能像 Codex / Claude Code 那样读写文件、跑命令，
+而不只是聊天。
 
-网页 Agent 默认只能在聊天框里回话，碰不到你本机的文件。这个工具把这段接上，
-走的是你已有的网页账号。
+Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 —— 这个工具把这段接上，
+走的是你已有的 Arena 账号。
 
-另外实时显示这一轮抽到的**真实模型名与思考强度**。
+顺带解决了 Arena 自己不做的一件事：**它不告诉你这一轮用的是哪个模型**。
+这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到高级模型再干活：
+
+```
+claude-opus-5-max      gpt-6-astra-max
+claude-fable-5.1-high  gpt-5.6-luna-xhigh
+```
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)
@@ -43,7 +49,8 @@ node server/cli.mjs --dir "D:\proj"    # 指定目录
 node server/cli.mjs --no-tunnel        # 仅本机
 ```
 
-启动后会打印一段可直接粘贴给网页 AI 的内容：
+这是**标准 MCP 服务端**（零依赖，只用 Node 内置模块），任何支持 MCP 的客户端都能连 ——
+不像桌面版那样绑死 Arena。启动后会打印一段可直接粘贴的内容：
 
 ```
 https://xxxx.trycloudflare.com/mcp/<密钥>
@@ -58,7 +65,7 @@ https://xxxx.trycloudflare.com/mcp/<密钥>
 
 ## 两个功能
 
-### 1 · 把本机交给网页 Agent
+### 1 · 把本机交给 AI Agent
 
 MCP 服务 + cloudflared 免费隧道都内置，无需账号。权限分三级，默认只读：
 
@@ -72,7 +79,8 @@ MCP 服务 + cloudflared 免费隧道都内置，无需账号。权限分三级�
 
 ### 2 · 看穿这一轮抽到了什么模型
 
-Arena 每开新对话就随机分配模型，顶级模型**不可选**。所以玩法是：
+Arena 每开新对话就随机分配模型，顶级模型**不可选**，而且**界面不显示用的是哪个**。
+这个工具把模型名读出来，于是玩法变成：
 
 ```
 新开对话 → 发一句「你好」 → 看面板

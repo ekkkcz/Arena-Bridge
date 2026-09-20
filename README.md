@@ -1,303 +1,119 @@
 # Arena Bridge
 
-把**本机项目**通过 MCP 交给**网页 AI Agent**（Arena、ChatGPT、Qwen Work、Manus…）去操作，
-并在界面里**实时显示这一轮抽到的真实模型名与思考强度**。
+把**本机项目**通过 MCP 交给**网页 AI Agent**（Arena / ChatGPT / Qwen Work / Manus…）操作，
+并实时显示这一轮**抽到的真实模型名与思考强度**。
 
-- **开箱即用** —— 双击 `Arena Bridge.exe` 就能用，不用开终端
-- **零依赖** —— 服务端只用 Node 内置模块；桌面版只依赖 Electron
-- **免费** —— 隧道走 cloudflared Quick Tunnel，无需账号、无需域名
-- **不反代** —— 不抓 Cookie、不逆向接口、不代解验证码；用的是平台自己开放的 Agent 能力
-- **可分级放权** —— 只读 → 可写 → 可执行，逐级开启
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)
 
-![Arena Bridge 工作流](docs/screenshots/workflow.webp)
+![工作流](docs/screenshots/workflow.webp)
 
-> 左边是 Arena 的对话与工具调用，中间是面板（实时模型名 `claude-opus-5` / **思考强度 HIGH**），
-> 右边是它在你本机项目里写出来的页面。三者同框，就是这套东西在做的事。
-
----
-
-## 两种用法
-
-| | 桌面版（推荐） | 命令行版 |
-| --- | --- | --- |
-| 启动 | 双击 `Arena Bridge.exe` | `node server/cli.mjs` |
-| 浏览器 | 自带（Electron），不占用你日常的 Edge | 用你自己的浏览器 |
-| MCP 服务 | 内置，自动启动 | 内置，自动启动 |
-| 公网隧道 | 内置，自动获取 | 内置，自动获取 |
-| 模型显示 | 右侧统一面板 | 浏览器扩展 HUD |
-
-两者可以并存：桌面版用的是**独立的 Chromium 配置目录**，不影响你的日常浏览器。
-
----
-
-## 桌面版
-
-![Agent Mode 能力](docs/screenshots/agent-mode.webp)
-
-双击 `Arena Bridge.exe`（或桌面快捷方式）。等右侧面板出现即就绪：
-
-1. 面板标注 **MCP · 公网地址** —— 说明隧道已通（没通时会锁住按钮并提示，避免把失效地址发出去）
-2. 点 **一键连接并开工** —— 自动开新对话、把 MCP 地址和指令发出去
-3. 直接给任务即可
-
-### 面板说明
-
-![思考强度识别](docs/screenshots/thinking-effort.webp)
-
-> 模型名 `gpt-5.6-sol` 不带档位后缀，但面板仍读出 **XHIGH** —— 来自 run trace 的 `span` 详情，
-> 不是靠猜。这正是下面「思考强度是怎么来的」在讲的事。
-
-界面**跟随 arena.ai 自身的设计变量**（颜色、字体、圆角全部取自页面的 CSS 变量），
-浅色/深色主题都会自动跟随，不会显得突兀。
-
-| 区域 | 内容 |
-| --- | --- |
-| **本轮模型** | 抽到的真实模型名；绿色=已由 trace 确认，蓝色=快速识别未确认 |
-| **思考强度** | `MAX` / `HIGH` / `XHIGH` 等；没有档位信息时显示 `—`（不猜） |
-| **详情** | **用量 token / 花费** / 名字档位 / trace 档位 / 思考 token / 思考块 / runId |
-| **MCP** | 公网地址，点一下即复制 |
-| **抽卡** | 连续开新对话抽模型，结果列表留在面板里 |
-
-面板可以**拖动**（按住标题栏）、**双击标题栏复位**、点 `›` **收起成右侧细条**。
-
-### 关于「抽卡」
-
-Arena 每开一个新对话就随机分配模型，且顶级模型**不可选**。所以想稳定用到好模型，方法是：
-
-```
-新开对话 → 随便问一句 → 看面板上的模型名
-   ├─ 好牌 → 留在这一轮里干活
-   └─ 烂牌 → 面板点「开始抽卡」，让它自动连续抽
-```
-
-自动抽卡时发的是自然问句（"你是什么模型？""你是哪家公司开发的？"…），
-既不像机器刷量，模型的回答里还可能自己报出身份。
-
-实测：发"你好"后 **约 5 秒**快速通道就能报出模型名（此时 trace 还没到，tokens=0）。
-
-#### 抽卡设置
-
-面板上有三个控件，设置会记住（换次启动还在）：
-
-| 控件 | 说明 |
-| --- | --- |
-| **轮数** | 抽几轮，1–200，默认 20 |
-| **目标** | 想要的关键字，逗号/空格/顿号分隔，如 `opus,gpt-6,fable` |
-| **抽到目标就停** | 命中就立刻停下，不再继续浪费轮数 |
-
-匹配规则是**大小写无关的子串匹配** —— 因为 Arena 的模型名带版本后缀
-（`gpt-5.5-2026-04-23`），全等匹配根本用不了。所以填 `opus` 能匹配
-`claude-opus-5`，填 `gpt-6` 能匹配 `gpt-6-astra-max`。
-
-**命中后会停在那个对话上，不会切走** —— 直接给它派活就行。
-（这时别再点「一键连接并开工」，那会开一个新对话把它顶掉。）
-
-抽卡过程中会显示 `已抽 3/20 · 记录 3 · ★ 命中 1`，
-命中过的模型在列表里带 ★ 并且底色高亮，最新的排最前。
-
----
-
-## 命令行版
-
----
-
-## 为什么这样做是合规的
-
-| | 反代类（chat2api / WebAI2API 等） | **本项目** |
-| --- | --- | --- |
-| 谁发请求 | **你的程序**冒充浏览器 | **平台自己的 Agent** |
-| 要不要凭据 | 需要窃取 Cookie / 代解验证码 | **完全不碰** |
-| 要不要绕过限制 | 需要隐藏模型、伪造指纹 | **不需要** |
-| 流量性质 | 第三方伪装 | **平台第一方行为** |
-
-本项目**没有绕过任何东西**：网页 Agent 本来就会调工具，这里只是**多给它一个工具源**。
+左：Arena 对话与工具调用　中：面板（`claude-opus-5` / 思考强度 **HIGH**）　右：它在你本机写出的页面
 
 ---
 
 ## 快速开始
 
-### 前置条件
+### 桌面版（推荐）
 
-| 需要什么 | 说明 |
-| --- | --- |
-| **Node.js 18+** | 唯一必需项 |
-| cloudflared | 可选但推荐。没有它就只能本机/局域网使用 |
+下载或克隆后，双击 **`start-desktop.cmd`**。
+首次运行会自动装 Electron（约 300 MB，只需一次），然后开窗口。
 
-装 cloudflared（Windows）：
+等右侧面板出现 → 点 **一键连接并开工** → 派活。
 
-```powershell
-winget install --id Cloudflare.cloudflared --exact
-```
+> 想用命令行装：`npm install` 后双击 `Arena Bridge.vbs`（无黑框）。
+> 访问密钥首次运行自动生成在 `.arena-bridge/config.json`，**不入库**。
 
-macOS / Linux：
+### 命令行版
 
 ```bash
-brew install cloudflared          # macOS
-# Linux 见 https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+node server/cli.mjs                    # 只读（先从这个开始）
+node server/cli.mjs --write            # + 写文件
+node server/cli.mjs --write --exec     # + 执行命令
+node server/cli.mjs --dir "D:\proj"    # 指定目录
+node server/cli.mjs --no-tunnel        # 仅本机
 ```
 
-> 装完**重启终端**，让 PATH 生效。
-
-### 启动
-
-```bash
-# 只读（最安全，建议先用这个）
-node server/cli.mjs
-
-# 允许写文件
-node server/cli.mjs --write
-
-# 允许写 + 执行命令（只在你信任的场景用）
-node server/cli.mjs --write --exec
-
-# 指定项目目录
-node server/cli.mjs --write --dir "D:\my-project"
-
-# 不使用隧道（仅本机）
-node server/cli.mjs --no-tunnel
-```
-
-启动后会打印一段**可直接复制**的内容：
+启动后会打印一段可直接粘贴给网页 AI 的内容：
 
 ```
-  就绪  把下面这段整段复制，粘进网页 AI 的聊天框：
+https://xxxx.trycloudflare.com/mcp/<密钥>
 
-  https://xxxx.trycloudflare.com/mcp/<随机密钥>
-
-  连接这个 MCP。工作目录是 C:\...\example-workspace
-  请先调用 get_project_info 确认，然后告诉我你能看到哪些工具。
+连接这个 MCP。工作目录是 C:\...\example-workspace
+请先调用 get_project_info 确认，然后告诉我你能看到哪些工具。
 ```
 
-> 💡 **让它第一句就调用工具**（如 `get_project_info`）。
-> 工具一被调用，模型调用就发生，浏览器面板上的模型名会**更快**出现。
+> 让它**第一句就调用工具**（如 `get_project_info`）——模型一调用，模型名更快出现。
 
 ---
 
-## 浏览器扩展：实时看抽到的模型（命令行版用）
+## 两个功能
 
-### 安装
+### 1 · 把本机交给网页 Agent
 
-1. 打开 Edge/Chrome → `edge://extensions` / `chrome://extensions`
-2. 打开 **开发人员模式**
-3. 点 **加载解压缩的扩展** → 选择本仓库的 `extension` 文件夹
-4. 打开 <https://arena.ai/agent>
+MCP 服务 + cloudflared 免费隧道都内置，无需账号。权限分三级，默认只读：
 
-### 抽卡：怎么用才快
-
-**关键：不要等一个项目做完。** 抽卡的玩法是——
-
-```
-新开对话 → 发一句"你好" → 看模型名
-   ├─ 好牌 → 留在这一轮里干活
-   └─ 烂牌 → 关掉，重开
-```
-
-**只要 10~20 秒**，不是几分钟。原因：
-
-| 阶段 | 耗时 | 说明 |
-| --- | --- | --- |
-| 发出问题 → 模型开始回答 | 几秒 | 模型一调用，检测就有素材了 |
-| **快速通道**命中 | **1~2 秒** | 直接从消息流认模型名 |
-| token → run trace 复核 | 2~5 秒 | 更权威的确认 |
-
-> ⚠️ **为什么让它做项目会慢**：模型会先思考、跑 bash、写文件，
-> 折腾一两分钟才第一次真正调用模型 —— 而**检测要等那一次调用**。
-> 所以抽卡只发一句短问题，抽中了再让它干活。
-
-### 两条检测路径
-
-| 通道 | 延迟 | 来源 | 可信度 |
-| --- | --- | --- | --- |
-| **快速** | 1~2 秒 | 消息流里的模型名 | 中（面板标"未确认"） |
-| **权威** | token 到达后 2~5 秒 | Trigger.dev run trace | 高（服务端写入） |
-
-面板会先显示蓝色的**「快速识别（未确认）」**，拿到 trace 后变成绿色的**「本轮真实模型名」**。
-
-### 它显示什么
-
-```
-本轮真实模型名
-gpt-6-astra-max
-
-思考强度: MAX            <- 你要的重点
-档位        max
-来源        模型名后缀
-思考 token  3200
-思考块      出现过
-```
-
-### 思考强度是怎么来的
-
-有两个来源，扩展会**分别列出并合成结论**：
-
-| 来源 | 例子 | 可信度 |
-| --- | --- | --- |
-| **模型名后缀** | `gpt-6-astra-max` → `max` | 高（Arena 明写在名字里） |
-| **trace 显式字段** | `reasoning_effort: "high"` | 高（服务端下发） |
-
-> **实测补充（2026-09-18）**：拿真实 run trace 逐字段核对过，
-> trace 里**根本没有** `reasoning_effort` / `thinking_budget` 这类字段 ——
-> 全文搜索 `reasoning` / `effort` / `thinking` / `budget` 命中数**全是 0**。
-> 它只有：span 名、耗时、日志级别、以及 accessory 里的
-> **模型名 / token 数 / 花费**。
->
-> 所以当模型名不带后缀（如 `kimi-k3`、`claude-opus-5`）时，
-> 面板显示 **`—`** 是**正确**的，不是坏了。
-> 声称能"检测思考强度"的工具，要么只对带后缀的模型有效，
-> 要么就是在**猜**。
-
-合成规则：
-
-| 情况 | 显示 |
+| 启动参数 | 可用工具 |
 | --- | --- |
-| 两者一致 | 档位 + 「名字 + trace 一致」（最可信） |
-| 只有名字有 | 档位 + 来源「模型名后缀」 |
-| 只有 trace 有 | 档位 + 来源「trace 显式字段」 |
-| **两者不一致** | 标红提示，以名字为准 |
-| 都没有 | 显示 `—` |
-
-> **设计原则**（沿用桌面版探针）：
-> *Explicit reasoning configuration only; never infer effort from timing, tokens or model names.*
-> —— 只报**名字里或 trace 里明写**的档位，**绝不靠耗时/字数去猜**。
-
----
-
-## 权限分级
-
-| 启动方式 | 可用工具 |
-| --- | --- |
-| `node server/cli.mjs` | `get_project_info` `list_files` `read_file` `search` |
+| *(无)* | `get_project_info` `list_files` `read_file` `search` |
 | `--write` | 上面 + `write_file` `apply_patch` |
 | `--write --exec` | 上面 + `run_command` |
 
-### 安全措施
+安全：目录边界（越界即拒）、命令白名单（不用 shell 拼接）、读写各 512 KB 上限。
 
-| 措施 | 说明 |
+### 2 · 看穿这一轮抽到了什么模型
+
+Arena 每开新对话就随机分配模型，顶级模型**不可选**。所以玩法是：
+
+```
+新开对话 → 发一句「你好」 → 看面板
+   ├─ 好牌 → 留在这一轮干活
+   └─ 烂牌 → 点「开始抽卡」自动连抽
+```
+
+**10~20 秒**就够，别等它做完项目：
+
+| 阶段 | 耗时 |
 | --- | --- |
-| **目录边界** | 所有路径解析后必须落在项目目录内，越界直接拒绝 |
-| **命令白名单** | 只允许 node/npm/git/python 等，**不使用 shell 字符串拼接** |
-| **大小上限** | 读写各 512 KB，命令输出 64 KB |
-| **访问密钥** | 首次运行随机生成，路径或 Bearer 头二选一 |
-| **只读优先** | 默认只读，写与执行需显式开启 |
+| 快速通道（消息流里的模型名） | **1~2 秒** |
+| 权威确认（Trigger.dev run trace） | 2~5 秒 |
+
+![思考强度](docs/screenshots/thinking-effort.webp)
+
+模型名 `gpt-5.6-sol` **不带**档位后缀，面板仍读出 **XHIGH** —— 来自 run trace 的 span 详情。
+
+抽卡可设轮数（1–200）、目标关键字（`opus,gpt-6`，大小写无关的子串匹配）、命中即停。
+命中后停在那个对话上不切走，直接派活即可。
+
+---
+
+## 为什么合规
+
+|  | 反代类（chat2api 等） | **本项目** |
+| --- | --- | --- |
+| 谁发请求 | 你的程序冒充浏览器 | **平台自己的 Agent** |
+| 要不要凭据 | 窃取 Cookie / 代解验证码 | **完全不碰** |
+| 要不要绕过限制 | 隐藏模型、伪造指纹 | **不需要** |
+
+没有绕过任何东西——网页 Agent 本来就会调工具，这里只是多给它一个工具源。
 
 ---
 
 ## 常见问题
 
-**Q：地址会变吗？**
-Quick Tunnel 每次启动地址都变。要固定地址，改用 Cloudflare Named Tunnel 或 ngrok（需自备账号）。
+**地址会变吗？**　Quick Tunnel 每次启动都变。要固定就换 Named Tunnel 或 ngrok。
 
-**Q：国内网络连不上？**
-cloudflared 走 QUIC/UDP 7844，**普通 HTTP 代理无效**，需要开 TUN / 全局代理。
+**国内连不上？**　cloudflared 走 QUIC/UDP 7844，普通 HTTP 代理**无效**，需要 TUN/全局代理。
 
-**Q：为什么面板不显示模型名？**
-1. 确认在 **Agent 模式**下；
-2. 确认**刷新过页面**（改扩展后必须 F5）；
-3. 让它**调用一次工具**，加速 token 下发；
-4. 控制台执行 `window.__amp3State()` 看实时状态。
+**面板不显示模型名？**　① 确认在 **Agent 模式**；② **刷新页面**（改扩展后必须 F5）；③ 让它先调用一次工具；④ 控制台跑 `window.__amp3State()`。
 
-**Q：安全吗？**
-地址=钥匙，**不要发到公开场合**。建议从只读开始，确认可控后再逐步放权。
+**安全吗？**　地址=钥匙，别发到公开场合。从只读开始，确认可控再放权。
+
+**需要什么？**　Node.js 18+。cloudflared 可选——没有它就只能本机/局域网用：
+
+```bash
+winget install --id Cloudflare.cloudflared --exact
+```
 
 ---
 
@@ -305,56 +121,45 @@ cloudflared 走 QUIC/UDP 7844，**普通 HTTP 代理无效**，需要开 TUN / �
 
 ```
 arena-bridge/
-├─ Arena Bridge.exe        桌面版入口（双击即可，无黑框）
+├─ start-desktop.cmd     ★ 双击这个（首次会自动 npm install）
+├─ Arena Bridge.vbs      静默启动（无黑框；已装好依赖后用）
 ├─ desktop/
-│  ├─ launcher/            原生启动器源码（C#）
+│  ├─ launcher/          原生启动器 Arena Bridge.exe（C#，45 KB）
 │  └─ app/
-│     ├─ main.cjs          主进程：内置 MCP + 隧道 + 探针注入 + 抽卡引擎
-│     └─ preload.cjs       ★ 唯一的 UI：跟随 Arena 设计变量的右侧面板
-├─ server/
-│  ├─ cli.mjs              命令行版入口
-│  └─ lib/
-│     ├─ mcp.mjs           零依赖 MCP 服务端
-│     ├─ tools.mjs         工具集（含目录边界与命令白名单）
-│     ├─ tunnel.mjs        cloudflared 隧道
-│     └─ config.mjs        配置与密钥生成
-├─ extension/              浏览器扩展（命令行版用）
-│  ├─ manifest.json
-│  ├─ probe.js             探针：抓模型名 + 思考强度，广播给宿主
-│  └─ icons/
-├─ example-workspace/      默认项目目录（可改成你自己的）
-├─ docs/                   调研与实测记录
-└─ README.md
+│     ├─ main.cjs        主进程：内置 MCP + 隧道 + 探针注入 + 抽卡引擎
+│     └─ preload.cjs     ★ 唯一的 UI：跟随 Arena 设计变量的右侧面板
+├─ server/               命令行版
+│  ├─ cli.mjs
+│  └─ lib/{mcp,tools,tunnel,config}.mjs
+├─ extension/            浏览器扩展（命令行版配它看模型名）
+├─ example-workspace/    默认项目目录
+└─ docs/                 调研 · 实测 · 截图
 ```
 
-> **一套探针，两种显示。** `probe.js` 本身不画界面给桌面版用（宿主会设 `window.__amp3NoHud`），
-> 状态通过 `window.postMessage` 跨隔离世界广播给 preload 面板；
-> 单独作为扩展用时它才自画 HUD，样式同样取自 Arena 的 CSS 变量。
-
-配置生成在 `.arena-bridge/config.json`（已加入 .gitignore，**不会提交**）。
-
 ---
 
-## 实测记录
+## 实测
 
-| 验证项 | 结果 |
+| 项 | 结果 |
 | --- | --- |
-| 官方 SDK 客户端连接零依赖服务端 | ✅ 通过 |
-| 只读模式 | ✅ 4 个工具 |
-| 读写模式 | ✅ 6 个工具 |
-| 执行模式 | ✅ 7 个工具 |
-| 目录越界防护 | ✅ 被拒绝 |
-| 命令白名单 | ✅ 被拒绝 |
-| Arena Agent 读写本机文件 | ✅ 实测通过 |
+| 官方 MCP SDK 客户端连接 | ✅ |
+| 只读 / 读写 / 执行 三档 | ✅ 4 / 6 / 7 个工具 |
+| 目录越界 · 命令白名单 | ✅ 均被拒 |
+| Arena Agent 读写本机文件 | ✅ |
 | Arena Agent 修 bug 至测试全绿 | ✅ 9/9 |
-| 模型名识别 | ✅ claude-opus-5 / gpt-5.5-2026-04-23 / gpt-5.6-sol / gpt-6-astra-* |
+| 模型名识别 | ✅ opus-5 / gpt-5.5 / gpt-5.6-sol / gpt-6-astra-* |
 | 思考强度解析 | ✅ 15 个真实模型名全通过 |
-| 统一面板端到端 | ✅ 尚未开始 → 识别中 → 显示模型名（约 20 秒） |
-| 面板跟随 Arena 主题 | ✅ 浅色 rgb(255,255,255) ↔ 深色 rgb(44,43,40) |
-| 隧道断线保护 | ✅ 未就绪时锁住按钮（防 Cloudflare 1033） |
+| 面板跟随 Arena 主题 | ✅ 浅色 ↔ 深色 |
+| 隧道断线保护 | ✅ 未就绪时锁按钮（防 1033） |
+
+更详细的过程见 [docs/实测报告.md](docs/实测报告.md) 与 [docs/调研报告.md](docs/调研报告.md)。
 
 ---
 
-## License
+## 链接
 
-MIT
+- [docs/实测报告.md](docs/实测报告.md) —— MCP 通路实测原始输出
+- [docs/调研报告.md](docs/调研报告.md) —— 原理、收费模式、可行性评估
+- [desktop/README.md](desktop/README.md) —— Electron 方案取舍与踩坑
+
+MIT © 2026 ekkkcz

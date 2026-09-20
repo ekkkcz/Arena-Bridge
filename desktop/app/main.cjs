@@ -31,6 +31,9 @@ try {
 } catch (e) {}
 
 const ROOT = path.resolve(__dirname, "..", "..");
+/* 窗口/任务栏图标。不设它的话，任务栏会用 electron.exe 自带的图标（那个原子球），
+   看起来和我们这个程序完全没关系。必须给绝对路径，且 app.ico 是 7 帧多尺寸。 */
+const APP_ICON = path.join(ROOT, "app.ico");
 const CFG_DIR = path.join(ROOT, ".arena-bridge");
 const CFG_FILE = path.join(CFG_DIR, "config.json");
 const LOG = path.join(CFG_DIR, "desktop.log");
@@ -245,6 +248,7 @@ let win = null;
 function createWindow() {
   win = new BrowserWindow({
     width: 1440, height: 940, show: false, backgroundColor: "#0d1117", title: "Arena Bridge",
+    icon: APP_ICON,
     autoHideMenuBar: true,
     webPreferences: { partition: "persist:arena-bridge", contextIsolation: true, nodeIntegration: false, sandbox: false, preload: path.join(__dirname, "preload.cjs") },
   });
@@ -846,6 +850,11 @@ ipcMain.handle("bridge:set", (_e, patch) => {
 
 /* ---------- 启动 ---------- */
 try { Menu.setApplicationMenu(null); } catch (e) {}
+
+/* AppUserModelID：Windows 靠它给任务栏分组/固定。
+   不设的话窗口会被归到 electron.exe 名下，右键菜单和固定行为都不对。
+   必须和 _make-shortcut.ps1 里写进快捷方式的值一致。 */
+try { app.setAppUserModelId("ekkkcz.ArenaBridge"); } catch (e) { say("setAppUserModelId 失败: " + e.message); }
 
 /* 单实例锁：重复双击时聚焦已有窗口，而不是再起一个（后者会因端口占用而崩溃） */
 const gotLock = app.requestSingleInstanceLock();

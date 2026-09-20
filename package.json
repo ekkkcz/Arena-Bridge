@@ -1,6 +1,6 @@
 {
   "name": "arena-bridge",
-  "version": "1.0.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "把本机项目通过 MCP 交给网页 AI Agent，并在浏览器里实时显示抽到的真实模型名。零依赖。",

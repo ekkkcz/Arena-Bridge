@@ -9,7 +9,7 @@
 - **不反代** —— 不抓 Cookie、不逆向接口、不代解验证码；用的是平台自己开放的 Agent 能力
 - **可分级放权** —— 只读 → 可写 → 可执行，逐级开启
 
-![Arena Bridge 工作流](docs/screenshots/workflow.png)
+![Arena Bridge 工作流](docs/screenshots/workflow.webp)
 
 > 左边是 Arena 的对话与工具调用，中间是面板（实时模型名 `claude-opus-5` / **思考强度 HIGH**），
 > 右边是它在你本机项目里写出来的页面。三者同框，就是这套东西在做的事。
@@ -32,7 +32,7 @@
 
 ## 桌面版
 
-![Agent Mode 能力](docs/screenshots/agent-mode.png)
+![Agent Mode 能力](docs/screenshots/agent-mode.webp)
 
 双击 `Arena Bridge.exe`（或桌面快捷方式）。等右侧面板出现即就绪：
 
@@ -42,7 +42,7 @@
 
 ### 面板说明
 
-![思考强度识别](docs/screenshots/thinking-effort.png)
+![思考强度识别](docs/screenshots/thinking-effort.webp)
 
 > 模型名 `gpt-5.6-sol` 不带档位后缀，但面板仍读出 **XHIGH** —— 来自 run trace 的 `span` 详情，
 > 不是靠猜。这正是下面「思考强度是怎么来的」在讲的事。

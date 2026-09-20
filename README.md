@@ -30,7 +30,18 @@ Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 
 下载或克隆后，双击 **`start-desktop.cmd`**。
 首次运行会自动装 Electron（约 300 MB，只需一次），然后开窗口。
 
-等右侧面板出现 → 点 **一键连接并开工** → 派活。
+等右侧面板出现，点 **一键连接并开工** —— 它把 MCP 地址和连接指令发进当前对话
+（**不新开对话**，所以刚抽到的模型会留着）。Agent 调一次 `get_project_info` 确认后，
+你就直接派活：
+
+```
+把这个项目的测试补全，跑到全绿
+重构 src/parser.js，拆成三个模块
+读一遍 README，把过时的示例改掉
+```
+
+它能**列目录、读文件、搜索、写文件、打补丁、跑命令** —— 跟 Codex / Claude Code 一样在你本机干活。
+面板上有 **读 / 写 / 执行** 三个开关，点一下即切（开会弹确认框）；执行默认关着。
 
 > 想用命令行装：`npm install` 后双击 `Arena Bridge.vbs`（无黑框）。
 > 访问密钥首次运行自动生成在 `.arena-bridge/config.json`，**不入库**。
@@ -67,13 +78,16 @@ https://xxxx.trycloudflare.com/mcp/<密钥>
 
 ### 1 · 把本机交给 AI Agent
 
-MCP 服务 + cloudflared 免费隧道都内置，无需账号。权限分三级，默认只读：
+MCP 服务 + cloudflared 免费隧道都内置，无需账号。权限分三级：
 
-| 启动参数 | 可用工具 |
+| | 可用工具 |
 | --- | --- |
-| *(无)* | `get_project_info` `list_files` `read_file` `search` |
-| `--write` | 上面 + `write_file` `apply_patch` |
-| `--write --exec` | 上面 + `run_command` |
+| 读 | `get_project_info` `list_files` `read_file` `search` |
+| + 写 | 上面 + `write_file` `apply_patch` |
+| + 执行 | 上面 + `run_command` |
+
+**桌面版**在面板上点 `读 / 写 / 执行` 三个开关即可（默认读 + 写）；
+**命令行版**用启动参数，默认只有读：`--write`、`--write --exec`。
 
 安全：目录边界（越界即拒）、命令白名单（不用 shell 拼接）、读写各 512 KB 上限。
 

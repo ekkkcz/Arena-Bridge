@@ -110,9 +110,13 @@ Arena 每开新对话就随机分配模型，顶级模型**不可选**，而且*
 | 快速通道（消息流里的模型名） | **1~2 秒** |
 | 权威确认（Trigger.dev run trace） | 2~5 秒 |
 
+抽中的样子 —— 目标写 `opus-5`，第 1 轮就命中 `claude-opus-5`，档位 MAX：
+
+![抽卡命中](docs/screenshots/gacha-hit.webp)
+
 ![思考强度](docs/screenshots/thinking-effort.webp)
 
-模型名 `gpt-5.6-sol` **不带**档位后缀，面板仍读出 **XHIGH** —— 来自 run trace 的 span 详情。
+第二张里模型名 `gpt-5.6-sol` **不带**档位后缀，面板仍读出 **XHIGH** —— 来自 run trace 的 span 详情。
 
 抽卡可设轮数（1–200）、目标关键字（如 `opus,astra,fable`，大小写无关的子串匹配）、命中即停。
 命中后停在那个对话上不切走，直接派活即可。

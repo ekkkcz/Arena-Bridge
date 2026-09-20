@@ -1,26 +1,28 @@
-# 干净重启 Arena Bridge：
-#   1) 杀掉本项目所有 electron（按可执行文件路径精确匹配）
-#   2) 杀掉 cloudflared
-#   3) 重新启动一个实例
+# Clean restart for Arena Bridge.
+# Keep this file ASCII-only: Windows PowerShell 5.1 reads .ps1 using the ANSI
+# codepage (gb2312 on zh-CN), so UTF-8 non-ASCII comments would be decoded
+# into a parse error.
+#
+# Paths derive from this script's own location, so it works on any machine
+# and user account.
 $ErrorActionPreference = "SilentlyContinue"
-$root = "%USERPROFILE%\Desktop\arena-bridge"
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-Write-Output "--- 停止旧实例 ---"
+Write-Output "--- stop old instance ---"
 Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |
   Where-Object { $_.ExecutablePath -like "$root*" } |
   ForEach-Object { Write-Output ("  kill " + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force }
-Get-Process cloudflared | ForEach-Object { Write-Output ("  kill cloudflared " + $_.Id); Stop-Process -Id $_.Id -Force }
+Get-Process cloudflared -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ("  kill cloudflared " + $_.Id); Stop-Process -Id $_.Id -Force }
 
 Start-Sleep -Seconds 3
 
-Write-Output "--- 确认端口释放 ---"
-$busy = Get-NetTCPConnection -LocalPort 8788 -State Listen
-if ($busy) { Write-Output "  8788 仍被占用，强制释放"; Stop-Process -Id $busy.OwningProcess -Force; Start-Sleep -Seconds 2 }
-else { Write-Output "  8788 已释放" }
+Write-Output "--- confirm port released ---"
+$busy = Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
+if ($busy) { Write-Output "  8788 still busy, forcing"; Stop-Process -Id $busy.OwningProcess -Force; Start-Sleep -Seconds 2 }
+else { Write-Output "  8788 free" }
 
-Write-Output "--- 启动新实例 ---"
-$env:ELECTRON_RUN_AS_NODE = $null
+Write-Output "--- start new instance ---"
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 Set-Location $root
 Start-Process -FilePath "$root\node_modules\electron\dist\electron.exe" -ArgumentList "desktop\app" -WorkingDirectory $root
-Write-Output "  已启动"
+Write-Output "  started"

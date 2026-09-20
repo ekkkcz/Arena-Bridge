@@ -4,7 +4,9 @@
 # ANSI codepage (gb2312 on this machine), so UTF-8 Chinese comments here would
 # be mangled into a parse error.
 $ErrorActionPreference = "Stop"
-$root = "%USERPROFILE%\Desktop\arena-bridge"
+# Derive the repo root from this script's own location so it works on any
+# machine and user account. Never hard-code an absolute path here.
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe  = Join-Path $root "desktop\launcher\Arena Bridge.exe"
 $ico  = Join-Path $root "app.ico"
 

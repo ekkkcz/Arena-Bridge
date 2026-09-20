@@ -7,11 +7,17 @@ Arena 的 Agent 模式本来就会调工具，只是碰不到你本机的文件 
 走的是你已有的 Arena 账号。
 
 顺带解决了 Arena 自己不做的一件事：**它不告诉你这一轮用的是哪个模型**。
-这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到高级模型再干活 ——
-比如 **Opus 5**、**Astra**、**Fable**。
+这里实时显示真实模型名与思考强度，于是能靠「抽卡」刷到两家的旗舰再干活：
 
-> 模型名单不写死：识别走通用规则（厂商前缀 + 版本 + 档位后缀）加 run trace，
-> Arena 上新模型、改档位都不用更新这个工具。
+| 模型 | 厂商 |
+| --- | --- |
+| `claude-opus-5` | Anthropic |
+| `claude-fable-5.1` | Anthropic |
+| `gpt-6-astra` | OpenAI |
+
+> 这些是**基名**，实际还会带档位后缀：`claude-opus-5-max`、`gpt-6-astra-max`…
+> 名单不写死 —— 识别走通用规则（厂商前缀 + 版本 + 档位）加 run trace，
+> Arena 上新模型或改档位都不用更新这个工具。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)

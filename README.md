@@ -1,11 +1,11 @@
 # Arena Bridge
 
-**把网页版 AI Agent 接到你的本机项目上** —— 它能真的读写文件、跑命令，不只是聊天。
+把**本机项目**接给**网页 AI Agent**（Arena / ChatGPT / Qwen Work / Manus…），
+让它真的能读写文件、跑命令，而不只是聊天。
 
-不用买 API、不用订阅：Arena / ChatGPT / Qwen Work / Manus 这些网页 Agent 你本来就能免费用，
-缺的只是「它碰不到你的代码」。这个工具补上这一段。
+不用买 API、也不用订阅 —— 这些网页 Agent 本来就能免费用，缺的只是碰不到你的代码。
 
-外加一个别处没有的能力：**看穿这一轮到底是哪个模型在干活**（真实模型名 + 思考强度）。
+还会实时显示这一轮抽到的**真实模型名与思考强度**。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)

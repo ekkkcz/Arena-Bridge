@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Arena 模型探测器",
+  "version": "4.2.0",
+  "description": "在 Arena Agent 模式下实时显示本轮随机抽中的真实模型名与推理信息。单脚本架构，无后台进程，界面跟随 arena.ai 主题。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Arena 模型探测器 v4"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://arena.ai/*",
+        "https://*.arena.ai/*"
+      ],
+      "js": [
+        "probe.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

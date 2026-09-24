@@ -416,6 +416,14 @@ function build() {
           '<div class="chips" id="perms"></div>' +
           '<div class="gsum" id="tierNote"></div>' +
         '<div class="url none" id="url">获取中\u2026</div>' +
+        /* 隧道坏了（地址失效）时的自救按钮。放在地址下面，不用去翻命令。 */
+        '<div class="acts"><button class="s" id="renew" ' +
+          'title="当前公网地址打不通时，丢掉它并申请一条新的。会换地址，需要重新粘给 Arena。">地址失效？换新地址</button></div>' +
+        /* 多开入口：两个客户端各挂一个项目时用。
+           后端（--profile）早就有了，但以前只能去点 _multi.cmd —— 这里给它一个按钮。 */
+        '<button class="p" id="newInst" ' +
+          'title="再开一个 Arena Bridge 窗口，它有自己独立的 MCP 端口、配置和 Arena 登录会话，互不抢。两个客户端同时干活就用这个。">再开一个实例（各连各的 MCP）</button>' +
+        '<div class="gsum" id="multiNote"></div>' +
         '<div class="gsum" id="stline"></div>' +
         '<button class="s" id="pdir">选择项目目录\u2026</button>' +
         '<div class="gsum" id="pdirShow" title="Agent 只能在这个目录内读写">\u2026</div>' +
@@ -1207,9 +1215,15 @@ function mcpUrl() {
   return base + "/mcp/" + status.token;
 }
 function tunnelUp() { return !!(status && status.tunnelState === "up" && status.publicUrl); }
+/* pending = 地址已拿到但域名还没生效（实测要 ~56 秒）。
+   这时候【不能】把地址给用户 —— 粘过去 agent 只会报
+   "Name or service not known"，看起来就像断连。 */
+function tunnelPending() { return !!(status && status.tunnelState === "pending" && status.publicUrl); }
 function urlNote() {
   if (!status || !status.token) return "";
-  return tunnelUp() ? "MCP · 公网地址" : "MCP · 隧道未就绪";
+  if (tunnelUp()) return "MCP · 公网地址";
+  if (tunnelPending()) return "MCP · 地址生效中（先别粘）";
+  return "MCP · 隧道未就绪";
 }
 
 function row(k, v, cls) {
@@ -1362,13 +1376,19 @@ function render() {
     setText(sh, "stline", status ? "尚无工具调用" : "");
   }
 
-  const url = mcpUrl();
-  const uEl = sh.getElementById("url");
-  if (uEl) {
-    if (url) { setCls(sh, "url", "url"); setText(sh, "url", url); }
-    else { setCls(sh, "url", "url none"); setText(sh, "url", "获取中\u2026"); }
-    setText(sh, "mlbl", urlNote() || "MCP");
+  /* 地址生效中：显示倒计时提示而不是那个还打不通的地址 */
+  if (tunnelPending()) {
+    setCls(sh, "url", "url none");
+    setText(sh, "url", "地址已拿到，正在等域名生效…（约 1 分钟，好了会自动变成可点）");
+  } else {
+    const url = mcpUrl();
+    const uEl = sh.getElementById("url");
+    if (uEl) {
+      if (url) { setCls(sh, "url", "url"); setText(sh, "url", url); }
+      else { setCls(sh, "url", "url none"); setText(sh, "url", "获取中\u2026"); }
+    }
   }
+  setText(sh, "mlbl", urlNote() || "MCP");
 
   /* ---- 抽卡 ---- */
   const gR = sh.getElementById("gRounds"), gT = sh.getElementById("gTargets"),
@@ -1429,13 +1449,60 @@ function render() {
     };
   }
 
+  /* 再开一个实例：每个实例一套 MCP，两个客户端各连各的 */
+  const niEl = sh.getElementById("newInst");
+  if (niEl && !niEl.dataset.b) {
+    niEl.dataset.b = "1";
+    niEl.onclick = async () => {
+      niEl.disabled = true;
+      const old = niEl.textContent;
+      niEl.textContent = "启动中\u2026";
+      try {
+        const r = await ipcRenderer.invoke("bridge:new-instance");
+        if (r && r.ok) {
+          panelLog("已开新实例：profile " + r.profile + "（MCP 端口 " + r.port + "）");
+          panelLog("   请在新窗口里：① 登录 Arena ② 选这个客户端的项目目录 ③ 复制它面板上的地址");
+          noteToFile("新实例 profile=" + r.profile + " port=" + r.port);
+        } else {
+          panelLog("开新实例失败：" + ((r && r.err) || "未知"));
+        }
+      } catch (e) { panelLog("开新实例失败：" + e.message); }
+      niEl.disabled = false;
+      niEl.textContent = old;
+    };
+  }
+
+  /* 换新地址：隧道真的坏了才需要点（正常情况下地址会一直复用不变） */
+  const rnEl = sh.getElementById("renew");
+  if (rnEl && !rnEl.dataset.b) {
+    rnEl.dataset.b = "1";
+    rnEl.onclick = async () => {
+      rnEl.disabled = true;
+      const old = rnEl.textContent;
+      rnEl.textContent = "申请中\u2026";
+      panelLog("正在申请新的公网地址（旧的作废）…");
+      try {
+        const r = await ipcRenderer.invoke("bridge:renew-tunnel");
+        if (r && r.ok) {
+          panelLog("新地址: " + r.url);
+          noteToFile("手动换隧道地址 → " + r.url);
+        } else {
+          panelLog("换地址失败: " + ((r && r.err) || "未知"));
+        }
+      } catch (e) { panelLog("换地址失败: " + e.message); }
+      rnEl.disabled = false;
+      rnEl.textContent = old;
+    };
+  }
+
   /* ---- 连接按钮：隧道没就绪就锁住，避免把死地址发出去 ---- */
   const cEl = sh.getElementById("connect");
   if (cEl && !cEl.dataset.busy) {
     const ok = tunnelUp();
     if (cEl.disabled === ok) {           // 只在状态翻转时改，别打断进行中的文案
       cEl.disabled = !ok;
-      cEl.textContent = ok ? "填入连接指令" : "等待隧道就绪\u2026";
+      cEl.textContent = ok ? "填入连接指令"
+        : (tunnelPending() ? "等地址生效中\u2026" : "等待隧道就绪\u2026");
     }
   }
 

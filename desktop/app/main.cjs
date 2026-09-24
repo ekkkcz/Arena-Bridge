@@ -96,6 +96,8 @@ const CFG_DIR = path.join(ROOT, ".arena-bridge");
 /* 未指定 profile 时就是 config.json / desktop.log（与以前一模一样） */
 const CFG_FILE = path.join(CFG_DIR, PROFILE ? "config." + PROFILE.name + ".json" : "config.json");
 const LOG = path.join(CFG_DIR, PROFILE ? "desktop." + PROFILE.name + ".log" : "desktop.log");
+/* 隧道信息落盘（见 startTunnel 的说明）：{ pid, url, port, at } */
+const TUNNEL_FILE = path.join(CFG_DIR, PROFILE ? "tunnel." + PROFILE.name + ".json" : "tunnel.json");
 
 try { fs.mkdirSync(CFG_DIR, { recursive: true }); } catch (e) {}
 /* 日志改成异步批量写。
@@ -364,22 +366,79 @@ function startMcp(onLog) {
   return new Promise((resolve) => { mcpServer.once("error", (e) => resolve({ ok: false, err: e.message })); mcpServer.listen(cfg.port, "127.0.0.1", () => resolve({ ok: true, port: cfg.port })); });
 }
 
-/* ---------- 隧道 ---------- */
+/* ---------- 隧道 ----------
+   ★ 为什么要把隧道信息存盘、并在启动时复用 ★
+   ── 用户踩到的真问题 ──
+   trycloudflare 的快速隧道【每次启动都是一个全新的随机域名】。而用户会把地址
+   粘进 Arena 的对话里；应用一重启，旧对话里那个地址就死了（实测：连 DNS 都不再解析，
+   agent 报 "Name or service not known"）。
+   所以只要重启应用，就有一个会话"连不上"——看起来像"MCP 只能给一个会话用"，
+   实际上是【粘着旧地址的那个会话废了】，而粘到新地址的那个还能用。
+
+   实测数据：日志里 100 次启动产生了 94 个不同的地址。
+
+   修法：隧道信息落盘，下次启动时如果那个进程【还活着且健康】就直接复用 —— 地址不变，
+   已经粘过的对话继续有效。只有真的不可用了才申请新地址。 */
 let tunnelProc = null;
 let publicUrl = "";
 let tunnelState = "starting";     // starting | up | down
-function startTunnel(onUrl, onLog) {
-  const cands = ["C:\\Program Files (x86)\\cloudflared\\cloudflared.exe", "C:\\Program Files\\cloudflared\\cloudflared.exe", "cloudflared"];
-  let bin = "cloudflared";
-  for (const c of cands) { try { if (c.includes(":") && fs.existsSync(c)) { bin = c; break; } } catch (e) {} }
-  tunnelProc = spawn(bin, ["tunnel", "--url", "http://127.0.0.1:" + cfg.port, "--no-autoupdate"], { stdio: ["ignore", "pipe", "pipe"] });
-  let done = false;
-  const scan = (b) => { const s = String(b); if (!done) { const m = s.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/); if (m) { done = true; publicUrl = m[0]; tunnelState = "up"; onUrl(m[0]); } } };
-  if (tunnelProc.stdout) tunnelProc.stdout.on("data", scan);
-  if (tunnelProc.stderr) tunnelProc.stderr.on("data", scan);
+
+function readTunnelInfo() { try { return JSON.parse(fs.readFileSync(TUNNEL_FILE, "utf8")); } catch (e) { return null; } }
+function writeTunnelInfo(o) { try { fs.writeFileSync(TUNNEL_FILE, JSON.stringify(o, null, 2) + "\n"); } catch (e) {} }
+function clearTunnelInfo() { try { fs.unlinkSync(TUNNEL_FILE); } catch (e) {} }
+/* 进程还在不在。signal 0 只做存在性检查，不真的发信号。 */
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return !!(e && e.code === "EPERM"); }   // 存在但没权限 —— 也算活着
+}
+/* 健康检查：从公网 GET 一次。GET 不带 text/event-stream 时服务端会回 JSON 摘要。 */
+async function tunnelHealthy(url) {
+  if (!url) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    const r = await fetch(url + "/mcp/" + cfg.token, { method: "GET", signal: ctl.signal, cache: "no-store" });
+    clearTimeout(t);
+    return r.status === 200;
+  } catch (e) { return false; }
+}
+
+const CF_BIN = (() => {
+  const cands = ["C:\\Program Files (x86)\\cloudflared\\cloudflared.exe", "C:\\Program Files\\cloudflared\\cloudflared.exe"];
+  for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch (e) {} }
+  return "cloudflared";
+})();
+
+/* 真正起一条新隧道。
+   ── 为什么是 detached + 输出写文件（而不是管道）──
+   目的：让隧道【在应用退出后继续活着】，这样下次启动能复用同一个地址
+   （地址一变，已经粘进 Arena 对话的那个就废了 —— 用户就是这么被断连的）。
+     · detached：脱离本进程，父进程退出不会带走它；
+     · 输出重定向到文件而不是管道：父进程一死管道就断，cloudflared 往断管道写会退出；
+       写文件则完全没这个问题，而且事后还能翻它的日志。
+   地址从文件里轮询着读 —— 拿不到就超时报错，不会永远卡在 "starting"。 */
+function spawnTunnel(onUrl, onLog) {
+  const logFile = path.join(CFG_DIR, PROFILE ? "tunnel." + PROFILE.name + ".log" : "tunnel.log");
+  let fd = "ignore";
+  try { fd = fs.openSync(logFile, "a"); } catch (e) {}
+  try {
+    tunnelProc = spawn(CF_BIN, ["tunnel", "--url", "http://127.0.0.1:" + cfg.port, "--no-autoupdate"], {
+      stdio: ["ignore", fd, fd],
+      detached: true,          // ★ 关键：应用退出后隧道留下，下次复用同一地址
+      windowsHide: true,
+    });
+  } catch (e) {
+    tunnelState = "down";
+    onLog("隧道启动失败: " + e.message);
+    pushStatus();
+    return;
+  }
+  try { tunnelProc.unref(); } catch (e) {}
+  const pid = tunnelProc.pid;
+  try { fs.closeSync(fd); } catch (e) {}   // 父进程不需要这个 fd 了
+
   tunnelProc.on("error", (e) => { tunnelState = "down"; onLog("隧道启动失败: " + e.message); pushStatus(); });
-  // 隧道进程退出 = 公网地址失效。必须让面板知道，
-  // 否则会把已经死掉的 URL 发给 Arena，对方只会看到 Cloudflare 1033。
   tunnelProc.on("exit", (code) => {
     if (tunnelState === "up" || tunnelState === "starting") {
       tunnelState = "down";
@@ -387,6 +446,89 @@ function startTunnel(onUrl, onLog) {
       pushStatus();
     }
   });
+
+  /* 从日志文件里等地址出现，然后【确认它真的能用】再报就绪。
+     ── 为什么必须确认 ──
+     实测（2026-09-25）：cloudflared 4 秒就打印出地址，但那个域名要
+     【约 56 秒】才解析得出来。以前一拿到地址就置 up、面板就显示"就绪"，
+     用户照着粘进 Arena —— agent 立刻报 "Name or service not known"
+     （用户看到的就是这个"断连"）。
+     所以现在：地址出现 → 自己打一遍 → 通了才 up；不通就标 "pending"，
+     面板上明确写"生效中，先别粘"。 */
+  const t0 = Date.now();
+  let urlSeen = "";
+  const timer = setInterval(async () => {
+    let txt = "";
+    try { txt = fs.readFileSync(logFile, "utf8").slice(-8000); } catch (e) {}
+    if (!urlSeen) {
+      const m = txt.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+      if (m) {
+        urlSeen = m[0];
+        publicUrl = m[0];                 // 先让面板能看到，但状态是"未确认"
+        tunnelState = "pending";
+        onLog("已拿到公网地址（域名要几十秒才生效，正在确认）: " + m[0]);
+        pushStatus();
+      }
+    }
+    if (urlSeen) {
+      if (await tunnelHealthy(urlSeen)) {
+        clearInterval(timer);
+        tunnelState = "up";
+        try { writeTunnelInfo({ pid, url: urlSeen, port: cfg.port, at: Date.now() }); } catch (e) {}
+        onLog("✓ 公网地址已确认可用: " + urlSeen);
+        onUrl(urlSeen);
+        return;
+      }
+    }
+    if (Date.now() - t0 > 180000) {       // 3 分钟还确认不了就别死等
+      clearInterval(timer);
+      if (!urlSeen) onLog("等不到公网地址（180 秒超时）。检查 cloudflared；日志: " + logFile);
+      else onLog("地址拿到了但一直打不通: " + urlSeen + "（把它当失效处理）");
+      tunnelState = "down";
+      pushStatus();
+    }
+  }, 4000);
+  if (timer.unref) timer.unref();
+}
+
+async function startTunnel(onUrl, onLog) {
+  /* ① 先试复用：进程活着 + 端口没变 + 公网真能打通 */
+  const old = readTunnelInfo();
+  if (old && old.url && pidAlive(old.pid)) {
+    if (old.port !== cfg.port) {
+      onLog("上次的隧道是给端口 " + old.port + " 的（现在 " + cfg.port + "），另开一条");
+    } else {
+      onLog("发现上次的隧道还在（pid " + old.pid + "），正在确认是否可用…");
+      if (await tunnelHealthy(old.url)) {
+        publicUrl = old.url;
+        tunnelState = "up";
+        onLog("✓ 复用已有隧道，公网地址【没变】：" + publicUrl + "（已粘过的对话继续有效）");
+        onUrl(publicUrl);
+        return;
+      }
+      onLog("旧隧道已打不通，重新申请一条（旧地址作废：" + old.url + "）");
+      try { process.kill(old.pid); } catch (e) {}
+    }
+  }
+  clearTunnelInfo();
+  spawnTunnel(onUrl, onLog);
+}
+
+/* 面板上的「换新地址」：主动丢掉当前隧道、申请一条新的。
+   只在当前地址确实坏了、又不想重启整个应用时才需要。 */
+async function renewTunnel(onUrl, onLog) {
+  const old = readTunnelInfo();
+  if (tunnelProc) { try { tunnelProc.kill(); } catch (e) {} tunnelProc = null; }
+  else if (old && old.pid) { try { process.kill(old.pid); } catch (e) {} }
+  clearTunnelInfo();
+  publicUrl = "";
+  tunnelState = "starting";
+  onLog("正在申请新的公网地址…");
+  spawnTunnel(onUrl, onLog);
+  /* 给 cloudflared 一点时间把地址吐出来 */
+  const t0 = Date.now();
+  while (!publicUrl && Date.now() - t0 < 25000) await new Promise((r) => setTimeout(r, 500));
+  return publicUrl || "";
 }
 
 /* ---------- 窗口 ---------- */
@@ -956,6 +1098,66 @@ ipcMain.handle("bridge:pick-dir", async () => {
   } catch (e) { return { ok: false, err: e && e.message }; }
 });
 
+/* 面板上的「再开一个实例」：替用户跑 `_multi.cmd` 那件事。
+   ── 为什么要做成按钮 ──
+   多开的后端（--profile）早就好了，但入口是个 .cmd 文件，用户根本不知道要去点它。
+   点一下按钮 = 用同一个 electron 再起一个带 --profile 的实例。
+
+   两个细节：
+     ① 名字要挑一个【配置文件还不存在】的，免得冲到别人正在用的 profile；
+     ② detached:true + stdio ignore + unref —— 让它脱离本进程，
+        否则关掉当前窗口会把新窗口一起带走。 */
+function pickFreeProfile() {
+  for (const n of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+    if (!fs.existsSync(path.join(CFG_DIR, "config." + n + ".json"))) return n;
+  }
+  return null;
+}
+function spawnInstance(profileName) {
+  const exe = process.execPath;                       // 就是当前的 electron.exe
+  const appDir = path.join(__dirname);
+  /* ★ 必须清掉 ELECTRON_RUN_AS_NODE ★
+     这个变量一旦为真，electron.exe 会【当成普通 Node 跑】——
+     于是 main.cjs 里第一句 app.commandLine 就炸（app 是 undefined），
+     新实例秒退、连日志都不写。实测踩到：
+       TypeError: Cannot read properties of undefined (reading 'commandLine')
+     _launch.cmd / start-desktop.cmd 里都有一句 set "ELECTRON_RUN_AS_NODE="
+     就是为了这个；这里 spawn 时也必须显式清掉，别让它被继承。 */
+  const env = Object.assign({}, process.env);
+  delete env.ELECTRON_RUN_AS_NODE;
+
+  const child = spawn(exe, [appDir, "--profile", profileName], {
+    cwd: path.join(ROOT),
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+    env,
+  });
+  child.unref();
+  return child.pid;
+}
+
+/* 面板上的「再开一个实例」 */
+ipcMain.handle("bridge:new-instance", async () => {
+  try {
+    const name = pickFreeProfile();
+    if (!name) return { ok: false, err: "槽位 a~h 都占用了。想更多请用 _multi.cmd <名字> 手动开。" };
+    const pid = spawnInstance(name);
+    say("已启动新实例：profile " + name + "（pid " + pid + "）");
+    return { ok: true, profile: name, pid, port: 8789 + (() => { let n = 0; for (const ch of name) n = (n * 31 + ch.charCodeAt(0)) % 1000; return n; })() };
+  } catch (e) { return { ok: false, err: e && e.message }; }
+});
+
+/* 面板上的「换新地址」：隧道真的坏了又不想重启应用时用 */
+ipcMain.handle("bridge:renew-tunnel", async () => {
+  try {
+    const log = (m) => { say(m); try { if (win && !win.isDestroyed()) win.webContents.send("bridge-log", m); } catch (e) {} };
+    const url = await renewTunnel((u) => { log("公网地址: " + u); pushStatus(); }, log);
+    pushStatus();
+    return url ? { ok: true, url } : { ok: false, err: "没拿到新地址（cloudflared 没起来？）" };
+  } catch (e) { return { ok: false, err: e && e.message }; }
+});
+
 /* 面板把关键信息转到这里落盘 —— 面板日志区我读不到，走文件才看得见 */
 ipcMain.handle("bridge:note", (_e, m) => {
   say("[panel] " + String(m == null ? "" : m).slice(0, 400));
@@ -1080,7 +1282,7 @@ app.whenReady().then(async () => {
   createWindow();
 
   try {
-    startTunnel((url) => { log("公网地址: " + url); pushStatus(); }, log);
+    await startTunnel((url) => { log("公网地址: " + url); pushStatus(); }, log);
   } catch (e) {
     tunnelState = "down";
     log("隧道启动异常: " + (e && e.message));
@@ -1093,7 +1295,13 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   say("窗口关闭，退出");
   try { if (win && !win.isDestroyed()) { const u = win.webContents.getURL(); if (/^https:\/\/arena\.ai\//.test(u)) { cfg.lastUrl = u; saveCfg(); } } } catch (e) {}
-  try { if (tunnelProc) tunnelProc.kill(); } catch (e) {}
+  /* ★ 故意【不】杀隧道 ★
+     隧道是 detached 起的，退出后它继续活着，公网地址不变 ——
+     下次启动就能复用，已经粘进 Arena 对话的地址继续有效。
+     以前这里 kill() 掉，于是每次重启都换新地址，粘过的对话全部失效
+     （用户就是这么被"断连"的）。
+     想彻底停掉（连隧道一起）用 _stop.cmd，或在面板上点「换新地址」。 */
+  say("窗口关闭，退出（隧道保留，地址不变，下次启动复用）");
   try { if (mcpServer) mcpServer.close(); } catch (e) {}
   if (process.platform !== "darwin") app.quit();
 });

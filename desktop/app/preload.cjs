@@ -19,6 +19,11 @@ let blockReported = false;   // 本轮抽卡已经报过拦截，别重复上报
 // log() 定义在 build() 里，模块级代码（消息监听等）够不到它 ——
 // 之前在这里直接调 log() 会抛 "log is not defined"，把后面的逻辑整个带崩。
 let panelLog = () => {};
+/* 手动检测的状态（面板上「检测模型」那个按钮）。
+   自动通道在切对话 / 只在旧对话里待着的时候会漏，所以给一个"现在就查一次"的入口；
+   真正的活在探针里干（probe.js 的 detectCurrent），这里只管按钮与结果展示。 */
+let detectBusy = false;
+let lastDetect = null;
 // 关键信息同时写进 desktop.log（面板日志区外部读不到）
 function noteToFile(m) {
   try { ipcRenderer.invoke("bridge:note", String(m == null ? "" : m)); } catch (e) {}
@@ -383,6 +388,8 @@ function build() {
         '<div class="hint" id="mhint"></div>' +
         '<div id="pillWrap"></div>' +
         '<span class="more" id="more">详情</span>' +
+        '<span class="more" id="detect" style="margin-left:10px" ' +
+          'title="立刻检测当前这个对话的模型。自动通道在切换对话、或只在旧对话里待着时会漏，这时点它。">检测模型</span>' +
         '<label class="gchk" style="margin-top:6px">' +
           '<input type="checkbox" id="rnChk">' +
           '<span>把对话标题改成模型名</span></label>' +
@@ -404,7 +411,7 @@ function build() {
         '<div class="gsum" id="stline"></div>' +
         '<button class="s" id="pdir">选择项目目录\u2026</button>' +
         '<div class="gsum" id="pdirShow" title="Agent 只能在这个目录内读写">\u2026</div>' +
-        '<button class="p" id="connect" title="在当前对话里连接 MCP，不会新开对话">一键连接并开工</button>' +
+        '<button class="p" id="connect" title="把连接指令填进输入框，由你自己按发送；不会替你发送，也不会新开对话">填入连接指令</button>' +
       "</div>" +
 
       '<div class="sec"><div class="lbl">抽卡</div>' +
@@ -651,6 +658,25 @@ function build() {
     }
   };
 
+  /* 手动检测当前会话模型。
+     探针最多跑 30 秒（DETECT_BUDGET_MS），这里给 34 秒兜底收尾，
+     免得探针没注入成功时按钮永远停在"检测中…"。 */
+  $("detect").onclick = () => {
+    if (detectBusy) return;
+    detectBusy = true;
+    const el = $("detect");
+    el.textContent = "检测中\u2026";
+    log("手动检测：复用已捕获的 token 重读 + 重扫存储 + 请服务端补发 token\u2026");
+    noteToFile("手动检测开始（对话 " + (convId() || "新对话") + "）");
+    try { window.postMessage({ source: "__amp3_cmd", cmd: "detect-current" }, "*"); } catch (e) {}
+    setTimeout(() => {
+      if (!detectBusy) return;
+      detectBusy = false;
+      el.textContent = "检测模型";
+      log("手动检测：30 秒内没等到结果。探针可能没注入；或这个对话还没有过回合 —— 先发一条消息再点一次。");
+    }, 34000);
+  };
+
   // 导出 trace 原文（诊断"思考强度到底在不在里面"这类问题）
   $("trace").onclick = () => {
     try {
@@ -686,18 +712,21 @@ function build() {
         "请连接上面这个 MCP 服务，它提供本机项目的读写能力（工作目录 " + dir + "）。\n" +
         "第一步调用 get_project_info 确认连接，然后简短说明你看到的工具。\n" +
         "之后我会直接给任务，你就能开始干活。";
-      const ok = await fillAndSend(prompt);
-      if (ok) { log("已在当前对话发送连接指令（模型保持不变）"); btn.textContent = "已连接 \u2713"; }
+      /* ★ 只填不发：以前这里调 fillAndSend，会【替用户把消息发出去】。
+         现在只准备内容，按发送键由用户自己来。 */
+      const r = await fillOnly(prompt);
+      if (r.ok) { log("连接指令已填入输入框 —— 请自己按发送（不会替你发）"); btn.textContent = "已填入，请发送"; }
       else {
         try { await navigator.clipboard.writeText(prompt); } catch (e) {}
-        log("自动发送失败，已复制到剪贴板");
+        log(r.draft ? "输入框已有内容，没覆盖；连接指令已复制到剪贴板"
+                    : "填入失败（" + r.why + "），已复制到剪贴板");
         btn.textContent = "已复制，请粘贴";
       }
     } catch (e) {
       log("连接失败: " + e.message);
       btn.textContent = "重试";
     }
-    setTimeout(() => { btn.disabled = false; btn.textContent = "一键连接并开工"; }, 2800);
+    setTimeout(() => { btn.disabled = false; btn.textContent = "填入连接指令"; }, 2800);
   };
 
   ipcRenderer.on("bridge-status", (_e, s) => {
@@ -796,6 +825,24 @@ async function newConversation() {
   if (btn) { btn.click(); return true; }
   location.href = "https://arena.ai/agent";
   return true;
+}
+
+/* 只把文本填进输入框，【绝不点发送】。
+   与 fillAndSend 的唯一区别就是最后不 send.click()。
+   用途：「一键连接并开工」——点它只做准备，发送权留在用户手里。 */
+async function fillOnly(text) {
+  const el = document.querySelector("main div[contenteditable='true']") || document.querySelector("div[contenteditable='true']");
+  if (!el) return { ok: false, why: "找不到输入框" };
+  /* 输入框里已经有别的内容就不覆盖 —— 免得把用户正在写的东西冲掉。 */
+  const cur = (el.innerText || "").trim();
+  const want = String(text || "").trim();
+  if (cur && cur !== want) return { ok: false, draft: true, why: "输入框已有内容" };
+  el.focus();
+  const range = document.createRange(); range.selectNodeContents(el);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  if (!document.execCommand("insertText", false, text)) return { ok: false, why: "写入失败" };
+  el.focus();
+  return { ok: true };
 }
 
 async function fillAndSend(text) {
@@ -1201,16 +1248,27 @@ function render() {
     else { cls = "model none"; txt = p.state === "polling" ? "识别中\u2026" : p.state === "nologin" ? "需要登录" : "尚未开始"; }
     setCls(sh, "model", cls); setText(sh, "model", txt);
   }
-  setText(sh, "ver", (status && status.version) ? "v" + status.version : "");
+  /* 多开时窗口有好几个，面板上必须能一眼看出"这个窗口是哪个项目"。
+     没指定 --profile 时不显示任何多余东西（老样子）。 */
+  setText(sh, "ver", status
+    ? ((status.profile ? "[" + status.profile + "] " : "") + (status.version ? "v" + status.version : ""))
+    : "");
   setText(sh, "mlblTop", histName ? "上轮模型" : "本轮模型");
-  setText(sh, "mhint", histName
+  let mhint = histName
     ? "这条对话上次检测到的 · 发一条消息可重新确认"
     : internal
       ? ("内部名 " + internal + (internalTier
           ? "  ·  档位 " + internalTier.toUpperCase() + "（span 详情）"
           : "  ·  该模型无档位后缀"))
       : (fast ? "快速识别，正在用 run trace 复核\u2026"
-              : (p.model ? "内部名读取中…" : "")));
+              : (p.model ? "内部名读取中…" : ""));
+  /* 手动检测没认出来时，把原因写在模型名下面。
+     认出来了就不用说 —— 名字本身已经显示了。 */
+  if (lastDetect && !showName) {
+    const why = lastDetect.why || "仍未认出来";
+    mhint = "手动检测（" + Math.max(1, Math.round((lastDetect.ms || 0) / 1000)) + "s）：" + why;
+  }
+  setText(sh, "mhint", mhint);
   setHTML(sh, "pillWrap", lvl
     ? '<div class="pill on">思考强度 ' + esc(lvl.toUpperCase()) + "</div>"
     : '<div class="pill off">思考强度 \u2014</div>');
@@ -1369,7 +1427,7 @@ function render() {
     const ok = tunnelUp();
     if (cEl.disabled === ok) {           // 只在状态翻转时改，别打断进行中的文案
       cEl.disabled = !ok;
-      cEl.textContent = ok ? "一键连接并开工" : "等待隧道就绪\u2026";
+      cEl.textContent = ok ? "填入连接指令" : "等待隧道就绪\u2026";
     }
   }
 
@@ -1470,7 +1528,7 @@ function render() {
   for (const id of ["hdot", "rdot"]) setCls(sh, id, dotCls);
 
   // 收起态也显示模型名与档位，不用展开就能看见
-  setText(sh, "rlabel", showName || "Arena Bridge");
+  setText(sh, "rlabel", showName || (status && status.profile ? "Arena Bridge [" + status.profile + "]" : "Arena Bridge"));
   setHTML(sh, "rlvl", lvl ? esc(lvl.toUpperCase()) : "");
   const rlvlEl = sh.getElementById("rlvl");
   if (rlvlEl) rlvlEl.style.display = lvl ? "" : "none";
@@ -1489,6 +1547,26 @@ window.addEventListener("message", (e) => {
   if (d.type === "tok") {               // 探针按 runId 给的 token
     if (d.runId && d.token) tokCache[d.runId] = d.token;
     drainPendRuns();
+    return;
+  }
+  if (d.type === "detect" && d.report) {   // 手动检测的结论（探针跑完才回）
+    const r = d.report;
+    lastDetect = r;
+    detectBusy = false;
+    try {
+      const el = document.getElementById(PANEL_ID)?.shadowRoot?.getElementById("detect");
+      if (el) el.textContent = "检测模型";
+    } catch (e) {}
+    const hit = r.internalModel || r.model || r.fastModel;
+    if (hit) {
+      panelLog("手动检测成功：" + hit + "（" + Math.max(1, Math.round((r.ms || 0) / 1000)) + "s）");
+      noteToFile("手动检测成功 → " + hit);
+    } else {
+      panelLog("手动检测未识别：" + (r.why || "仍未认出来"));
+      noteToFile("手动检测未识别：" + (r.why || "") +
+                 (r.notes && r.notes.length ? " | " + r.notes.join(" | ") : ""));
+    }
+    render();
     return;
   }
   if (d.type === "trace") {

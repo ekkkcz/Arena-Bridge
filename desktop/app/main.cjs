@@ -19,11 +19,64 @@ app.commandLine.appendSwitch("enable-gpu-rasterization");   // 用 GPU 做光栅
 app.commandLine.appendSwitch("enable-zero-copy");           // 零拷贝上传纹理
 try { app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); } catch (e) {}
 
+/* ---------- 多开（profile）----------
+   一个实例 = 一整套（MCP 端口 + 隧道 + 项目目录 + 窗口 + 登录态）。
+   用户的实际用法是「两个客户端各跑一个项目」，所以要让两个实例各有一套、
+   互不覆盖 —— 这就是 --profile 的作用：
+
+     MCP 端口 / 配置文件 / 日志 / 项目目录 / 模型档案 / Electron 会话数据
+     全部按 profile 分开。
+
+   ★ 不给 --profile 时，下面所有路径与端口与以前【逐字相同】——
+     老用户、快捷方式、start-desktop.cmd 的行为一点不变。
+
+   ⚠ 必须赶在 app.whenReady() 之前做两件事：解析 profile、setPath。
+     窗口一旦建起来，userData 就改不动了。
+   ⚠ 端口规则是【确定性的】（同一个名字永远同一个端口）。
+     不用"扫描找空闲端口"：那样重启后端口会漂，用户粘进 Arena 的地址就失效了。 */
+function parseProfile(argv) {
+  const a = argv || [];
+  const i = a.indexOf("--profile");
+  let raw = i >= 0 ? a[i + 1] : "";
+  if (i >= 0 && (!raw || raw.startsWith("--"))) throw new Error("--profile 后面要跟一个名字");
+  raw = String(raw || "").trim().toLowerCase();
+  if (!raw) return null;                                   // 没给 → 走老路径
+  if (!/^[a-z0-9_-]{1,20}$/.test(raw)) {
+    throw new Error("profile 名字只能用字母 / 数字 / - / _，最多 20 个字符");
+  }
+  let n = 0;
+  for (const ch of raw) n = (n * 31 + ch.charCodeAt(0)) % 1000;   // 稳定的字符串散列
+  return { name: raw, port: 8788 + 1 + n };                      // 8789 ~ 9788，避开默认 8788
+}
+let PROFILE = null;
+try {
+  PROFILE = parseProfile(process.argv);
+} catch (e) {
+  /* 名字不合法就【别猜】—— 猜错了会写进另一个 profile 的配置，甚至覆盖别人的项目目录。
+     直接说清楚然后退出（此刻还没 whenReady，用同步的 showErrorBox）。 */
+  try { require("electron").dialog.showErrorBox("Arena Bridge 启动失败", String(e.message)); } catch (x) {}
+  console.error("[arena-bridge] " + e.message);
+  process.exit(2);
+}
+const BASE_USERDATA = path.join(process.env.APPDATA || __dirname, "arena-bridge-desktop");
+if (PROFILE) {
+  /* userData 必须每实例一份：Chromium 对同一个 userDataDir 会加锁，
+     两个进程共用会直接起不来（这不是我们的代码问题，是 Chromium 的机制）。
+     附带好处：每个 profile 有自己的 Cookie，可以各登一个 Arena 账号。 */
+  try {
+    app.setPath("userData", BASE_USERDATA + "." + PROFILE.name);
+    app.setPath("sessionData", BASE_USERDATA + "." + PROFILE.name);
+  } catch (e) { console.error("[arena-bridge] setPath 失败: " + e.message); }
+}
+
 /* 手动兜底：确认这台机器真的用不了 GPU（诊断日志里 softwareRendering=true）
    之后，把 .arena-bridge/config.json 里的 forceSoftwareRender 设成 true。
    这样就不用改代码 —— 也不会在"其实 GPU 好好的"时候把性能砍掉。 */
 try {
-  const _cfg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", ".arena-bridge", "config.json"), "utf8"));
+  const _cfgFile = PROFILE
+    ? path.join(__dirname, "..", "..", ".arena-bridge", "config." + PROFILE.name + ".json")
+    : path.join(__dirname, "..", "..", ".arena-bridge", "config.json");
+  const _cfg = JSON.parse(fs.readFileSync(_cfgFile, "utf8"));
   if (_cfg && _cfg.forceSoftwareRender) {
     app.disableHardwareAcceleration();
     console.log("[arena-bridge] forceSoftwareRender=true，已禁用硬件加速");
@@ -40,8 +93,9 @@ const APP_VERSION = (() => {
   catch (e) { return "0.0.0"; }
 })();
 const CFG_DIR = path.join(ROOT, ".arena-bridge");
-const CFG_FILE = path.join(CFG_DIR, "config.json");
-const LOG = path.join(CFG_DIR, "desktop.log");
+/* 未指定 profile 时就是 config.json / desktop.log（与以前一模一样） */
+const CFG_FILE = path.join(CFG_DIR, PROFILE ? "config." + PROFILE.name + ".json" : "config.json");
+const LOG = path.join(CFG_DIR, PROFILE ? "desktop." + PROFILE.name + ".log" : "desktop.log");
 
 try { fs.mkdirSync(CFG_DIR, { recursive: true }); } catch (e) {}
 /* 日志改成异步批量写。
@@ -73,7 +127,8 @@ try {
       " | ELECTRON_RUN_AS_NODE=[" + (process.env.ELECTRON_RUN_AS_NODE || "未设置") + "]" +
       " | 返回值前40字符=" + String(EL).slice(0, 40));
 } catch (e) { say("require electron 失败: " + e.message); }
-say("=== 启动 (electron " + process.versions.electron + ") ===");
+say("=== 启动 (electron " + process.versions.electron + ") ===" +
+    (PROFILE ? " [profile " + PROFILE.name + " · 端口 " + PROFILE.port + " · 配置 " + path.basename(CFG_FILE) + "]" : ""));
 process.on("uncaughtException", (e) => say("UNCAUGHT: " + e.message + "\n" + (e.stack || "").split("\n").slice(0, 5).join("\n")));
 
 /* ---------- 配置 ---------- */
@@ -103,7 +158,8 @@ const SKIP = new Set(["node_modules", ".git", ".arena-bridge", "dist", "build", 
   let c = {};
   try { c = JSON.parse(fs.readFileSync(CFG_FILE, "utf8")); } catch (e) { c = {}; }
   const out = Object.assign({
-    port: 8788, token: "", projectDir: path.join(ROOT, "example-workspace"),
+    /* 有 profile 就用它算出来的端口；老用户（无 profile）仍然是 8788 */
+    port: PROFILE ? PROFILE.port : 8788, token: "", projectDir: path.join(ROOT, "example-workspace"),
     allowWrite: true, allowExec: false,
     permission: "sandbox",
     allowedCommands: ["node", "npm", "npx", "pnpm", "yarn", "git", "python", "py", "tsc",
@@ -133,7 +189,8 @@ const saveCfg = () => { try { fs.writeFileSync(CFG_FILE, JSON.stringify(cfg, nul
  * 这样以前检测过、但当时还没做归档功能的对话也能显示出来。 */
 let seedModels = {};
 try {
-  seedModels = JSON.parse(fs.readFileSync(path.join(CFG_DIR, "models.json"), "utf8")) || {};
+  seedModels = JSON.parse(fs.readFileSync(
+    path.join(CFG_DIR, PROFILE ? "models." + PROFILE.name + ".json" : "models.json"), "utf8")) || {};
   say("历史模型档案: " + Object.keys(seedModels).length + " 条");
 } catch (e) { seedModels = {}; }
 
@@ -336,7 +393,9 @@ function startTunnel(onUrl, onLog) {
 let win = null;
 function createWindow() {
   win = new BrowserWindow({
-    width: 1440, height: 940, show: false, backgroundColor: "#0d1117", title: "Arena Bridge",
+    width: 1440, height: 940, show: false, backgroundColor: "#0d1117",
+    /* 标题里带 profile 名，任务栏和 Alt+Tab 上一眼能分清哪个是哪个 */
+    title: PROFILE ? "Arena Bridge — " + PROFILE.name : "Arena Bridge",
     icon: APP_ICON,
     autoHideMenuBar: true,
     webPreferences: { partition: "persist:arena-bridge", contextIsolation: true, nodeIntegration: false, sandbox: false, preload: path.join(__dirname, "preload.cjs") },
@@ -465,6 +524,7 @@ function pushStatus() {
     win.webContents.send("bridge-status", {
       port: cfg.port, token: cfg.token, projectDir: cfg.projectDir,
       allowWrite: cfg.allowWrite, allowExec: cfg.allowExec,
+        profile: PROFILE ? PROFILE.name : null,
         permission: tierOf(cfg).key, permissionLabel: tierOf(cfg).label,
         pathConfined: !!tierOf(cfg).confine, allowedCommands: cfg.allowedCommands,
       tools: mcpTools.map((t) => t.name), publicUrl, tunnelState,
@@ -950,7 +1010,13 @@ try { Menu.setApplicationMenu(null); } catch (e) {}
    必须和 _make-shortcut.ps1 里写进快捷方式的值一致。 */
 try { app.setAppUserModelId("ekkkcz.ArenaBridge"); } catch (e) { say("setAppUserModelId 失败: " + e.message); }
 
-/* 单实例锁：重复双击时聚焦已有窗口，而不是再起一个（后者会因端口占用而崩溃） */
+/* 单实例锁：重复双击时聚焦已有窗口，而不是再起一个（后者会因端口占用而崩溃）。
+   ── 多开为什么不会被它拦住 ──
+   这个锁是 Chromium 的 ProcessSingleton，它把锁文件放在 **userData 目录**里。
+   上面已经按 profile 调用过 app.setPath("userData", ...)，所以每个 profile
+   用的是【各自的】锁文件，互不干扰；而不给 --profile 时 userData 仍是默认目录，
+   所以"双击了两次"依旧会被正确拦住 —— 行为与以前完全一致。
+   （注意 requestSingleInstanceLock() 没有"锁名"参数，它的作用域就来自 userData。） */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   say("已有实例在运行，本次启动退出");

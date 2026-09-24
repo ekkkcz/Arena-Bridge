@@ -204,6 +204,7 @@
     wrap = document.createElement("div"); wrap.className = "wrap";
     wrap.innerHTML =
       '<div class="hd"><span class="dot warn"></span><span class="ttl">Arena 模型探测器 v3</span>' +
+      '<span class="mini" data-a="d" title="立刻检测当前会话的模型（自动识别在切换对话、或只在旧对话里待着时会漏）">检测</span>' +
       '<span class="mini" data-a="t" title="收起">—</span>' +
       '<span class="mini" data-a="r" title="复位">⟲</span></div>' +
       '<div class="bd"><div id="v"></div><div class="log" id="l"></div></div>';
@@ -213,6 +214,8 @@
     elLog = shadow.querySelector("#l");
     elDot = shadow.querySelector(".dot");
 
+    /* 手动检测：和桌面版面板上那颗按钮走同一条路（detectCurrent） */
+    shadow.querySelector('[data-a="d"]').onclick = function () { detectCurrent(true); };
     shadow.querySelector('[data-a="t"]').onclick = function () { wrap.classList.toggle("hide"); };
     shadow.querySelector('[data-a="r"]').onclick = function () {
       // 复位到左下角（与右侧边条错开）
@@ -315,6 +318,8 @@
         }, "*");
       } catch (x) {}
     }
+    /* 手动检测：宿主点「检测模型」时走这里。见下方 detectCurrent() 的说明。 */
+    else if (d.cmd === "detect-current") { detectCurrent(true); }
   });
 
   function draw(patch) {
@@ -1382,6 +1387,137 @@
     log("—— 切换对话 · 已重置 ——");
     draw();
   }
+
+  /* ================= 手动检测当前会话模型 =================
+     ── 为什么需要它 ──
+     自动通道有三处会漏，都不是 bug，是机制本身决定的：
+       ① token 由服务端在【回合结束】时才下发，而且只在页面重新请求
+          /api/history/unified 或 /api/chat/<id>/preview 时才补发；
+          只打开页面不动，等多久都没有（HANDOFF-01 §2.2 实测）。
+       ② SPA 切对话时 checkConv() 会 stopPoll() 并把 state 整个重置，
+          切换瞬间正在跑的那次轮询结果就丢了。
+       ③ 内部名（带档位的真名）在回合结束后 8~9 秒才写进 span，
+          到那时抽卡早就翻到下一个对话了。
+
+     所以这里【不新增任何识别手段】，只是把上面那两件事手动催一次：
+       ① 手上已有的 token → 对着它自己的 run 重读一遍
+          （绕开 historySkip 那个"同一个 run 只试一次"的闸门）；
+       ② 把存储里可能躺着的 token 再扫一遍（自动兜底是每 4 秒一次且只在没结果时跑）；
+       ③ 主动请求页面自己也会发的两个接口，让服务端补发一个当前会话的 token。
+     接口走的是页面自己的 fetch，所以响应照样被上面的钩子扫到、照样走 onToken ——
+     【自动识别的判断逻辑一行都没改】。 */
+  var DETECT_BUDGET_MS = 30000;
+  /* 一直没有 token 就早点收工 —— 这种情况下等满 30 秒是纯浪费 */
+  var DETECT_NOTOKEN_MS = 8000;
+  var detectTimers = [];
+  function detectStop() {
+    for (var i = 0; i < detectTimers.length; i++) { try { clearTimeout(detectTimers[i]); } catch (e) {} }
+    detectTimers = [];
+  }
+  function detectLater(fn, ms) { detectTimers.push(setTimeout(fn, ms)); }
+
+  function detectCurrent(manual) {
+    detectStop();
+    var t0 = Date.now();
+    var report = { at: Date.now(), manual: !!manual, notes: [], token: false, runId: null,
+                   model: null, fastModel: null, internalModel: null, ms: 0, reason: "" };
+
+    function finish(reason) {
+      detectStop();
+      report.reason = reason;
+      report.model = state.model || null;
+      report.fastModel = state.fastModel || null;
+      report.internalModel = state.internalModel || null;
+      report.runId = state.runId || null;
+      report.token = !!state.token;
+      report.ms = Date.now() - t0;
+      /* 认不出来时把原因说清楚 —— 用户看到的是"为什么没出来"，不是一句"失败" */
+      report.why = (report.model || report.fastModel) ? "" :
+        (!report.token
+          ? "没有拿到 token。服务端只在回合结束时补发，先在这个对话里发一条消息再看"
+          : "有 token，但 trace 里还没有模型标签（回合可能还没结束，稍后再点一次）");
+      log("手动检测" + (report.model ? "成功" : "结束") + "：" +
+          (report.internalModel || report.model || report.fastModel || "仍未认出来") +
+          (report.why ? " —— " + report.why : "") +
+          "（" + Math.max(1, Math.round(report.ms / 1000)) + "s）");
+      if (manual) {
+        try { window.postMessage({ source: "__amp3", type: "detect", report: report }, "*"); } catch (e) {}
+      }
+      return report;
+    }
+
+    /* ① 已有的 token：对着它自己的 run 重读一次 */
+    try {
+      var rid = null;
+      for (var i = tokOrder.length - 1; i >= 0; i--) {
+        if (tokByRun[tokOrder[i]]) { rid = tokOrder[i]; break; }
+      }
+      if (rid) {
+        delete historySkip[rid];            // 手动 = 明确要求重读，绕开"只试一次"
+        /* 带档位的内部名读一次就 done 了。用户既然手动点了，就说明他要的是
+           【完整】结果（名字 + 档位），所以把这个闸门也松开重读一次 ——
+           代价只是最多 6 次 span 详情请求，而这是用户主动点的一次。 */
+        if (!state.internalModel) {
+          internalCache = { runId: rid, name: null, done: false, reading: false };
+        }
+        if (polling && state.runId === rid) {
+          report.notes.push("这个 run 正在轮询中，直接等它出结果");
+        } else {
+          report.notes.push("复用已捕获的 token（run " + rid + "）");
+          onToken(tokByRun[rid], "手动检测");
+        }
+      } else {
+        report.notes.push("手上还没有 token");
+      }
+    } catch (e) { report.notes.push("复用 token 失败: " + (e && e.message)); }
+
+    /* ② 存储兜底立刻跑一遍（不等自动那条 4 秒的定时器） */
+    try {
+      for (var s = 0; s < sessionStorage.length; s++) {
+        var k = sessionStorage.key(s), v = sessionStorage.getItem(k);
+        if (v && v.indexOf("eyJ") >= 0) scan(k + "=" + v, "sessionStorage(手动)");
+      }
+      for (var l = 0; l < localStorage.length; l++) {
+        var k2 = localStorage.key(l), v2 = localStorage.getItem(k2);
+        if (v2 && v2.indexOf("eyJ") >= 0) scan(k2 + "=" + v2, "localStorage(手动)");
+      }
+    } catch (e) {}
+
+    /* ③ 催服务端补发 token：这两个接口页面自己也会发（见 HANDOFF-01 §2.2）。
+       只负责发起 —— 响应由既有的 fetch 钩子扫描，不在这里重复读 body。 */
+    function nudge(url, tag) {
+      try {
+        return fetch(location.origin + url, {
+          method: "GET", credentials: "same-origin", cache: "no-store",
+          headers: { Accept: "application/json" },
+        }).then(function (r) {
+          report.notes.push(tag + " → HTTP " + (r && r.status));
+        }).catch(function (e) {
+          report.notes.push(tag + " 失败: " + (e && e.message));
+        });
+      } catch (e) { report.notes.push(tag + " 异常: " + (e && e.message)); return Promise.resolve(); }
+    }
+    nudge("/api/history/unified", "历史列表");
+    try {
+      var m = (location.pathname || "").match(/\/agent\/([0-9a-f-]{36})/i);
+      if (m) detectLater(function () { nudge("/api/chat/" + m[1].toLowerCase() + "/preview", "会话预览"); }, 1500);
+    } catch (e) {}
+
+    /* ④ 盯着状态：认出来就收工，超时就如实报告 */
+    function watch() {
+      if (state.model) { finish("found"); return; }
+      /* 早退：连 token 都没有，就没什么可等的了 —— 别让用户对着"检测中…"干等 30 秒
+         才发现这个对话压根没有可用的 token。 */
+      if (!state.token && Date.now() - t0 > DETECT_NOTOKEN_MS) { finish("no-token"); return; }
+      if (Date.now() - t0 > DETECT_BUDGET_MS) { finish("timeout"); return; }
+      detectLater(watch, 1200);
+    }
+    detectLater(watch, 1200);
+
+    return report;
+  }
+  /* 控制台里也能手动催一次：window.__amp3Detect() */
+  try { window.__amp3Detect = function () { return detectCurrent(true); }; } catch (e) {}
 
   /* ================= 启动 ================= */
   function boot() {

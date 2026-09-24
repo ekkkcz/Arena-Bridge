@@ -38,7 +38,7 @@ git clone https://github.com/ekkkcz/Arena-Bridge.git
 cd Arena-Bridge && start-desktop.cmd
 ```
 
-登录 Arena 并进入 Agent 模式，在右侧面板选择项目目录，等待连接就绪后点击 **一键连接并开工**。
+登录 Arena 并进入 Agent 模式，在右侧面板选择项目目录，等待连接就绪后点击 **填入连接指令**（只把指令填进输入框，发送由你自己按）。
 Agent 调用 `get_project_info` 确认项目与权限后，就可以开始安排任务：
 
 ```
@@ -54,6 +54,19 @@ Agent 可以**列目录、读文件、搜索代码、写文件、应用文本补
 
 > 也可以先运行 `npm install`，再双击 `Arena Bridge.vbs` 静默启动桌面版。
 > 访问密钥首次运行自动生成在 `.arena-bridge/config.json`，**不入库**。
+
+**同时跑多个项目**：用 `_multi.cmd` 再开一个实例即可。每个实例有自己的
+**MCP 端口、配置文件、日志和 Arena 登录会话**，互不干扰：
+
+```cmd
+_multi.cmd              :: 开一个新实例（自动挑还没用过的槽位）
+_multi.cmd work         :: 用名字 "work" 开一个
+_multi.cmd -list        :: 看哪些槽位用过
+_multi.cmd -stop work   :: 只停 "work"，其它实例照跑
+```
+
+每个实例在面板里各选自己的项目目录 —— 也就是说**一个对话挂一个项目**。
+注意每个实例要在 Arena 里各登录一次（Cookie 是分开的）。
 
 **适合个人项目、脚本调试和原型开发**，由你查看执行过程并确认结果。
 模型分配、平台额度和隧道连接会影响使用体验，本项目不提供无人值守生产任务所需的稳定性保证。

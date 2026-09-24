@@ -78,17 +78,48 @@ process.on("uncaughtException", (e) => say("UNCAUGHT: " + e.message + "\n" + (e.
 
 /* ---------- 配置 ---------- */
 const SKIP = new Set(["node_modules", ".git", ".arena-bridge", "dist", "build", ".next", "__pycache__", ".venv"]);
-function loadCfg() {
+/* ---------- 权限档位 ----------
+   * 两个档位一键切换，管的是【边界】而不是"能不能做"：
+   *     sandbox 仅在沙箱 = 路径锁在项目目录内 + 命令走白名单
+   *     full    完全权限 = 可访问整块磁盘 + 不再限制命令
+   * 读/写/执行 三个 chip 仍然独立生效：档位管"边界多大"，chip 管"开不开"，两者叠加。
+   *
+   * ⚠ PowerShell 是 shell：它进了白名单之后，「白名单」就不再是安全边界
+   *   （powershell -Command 能调用任何东西）。所以沙箱档的真实含义是
+   *   "工作目录被锁在项目里"，而不是"只能跑白名单里这几个程序"。
+   *   面板上照实标注，不给虚假的安全感。 */
+  const TIERS = {
+    sandbox: { key: "sandbox", label: "仅在沙箱", allowlist: true, confine: true },
+    full: { key: "full", label: "完全权限", allowlist: false, confine: false },
+  };
+  const tierOf = (c) => TIERS[(c && c.permission) === "full" ? "full" : "sandbox"];
+
+  /* PowerShell 的中文输出在本机（PS 5.1 + GBK 代码页）会乱码。
+     实测：不加前导 "中文测试" 出来是 "????"；加了就正确。
+     这段前导只设输出编码，不改其它行为。 */
+  const PS_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;";
+
+  function loadCfg() {
   let c = {};
   try { c = JSON.parse(fs.readFileSync(CFG_FILE, "utf8")); } catch (e) { c = {}; }
   const out = Object.assign({
     port: 8788, token: "", projectDir: path.join(ROOT, "example-workspace"),
     allowWrite: true, allowExec: false,
-    allowedCommands: ["node", "npm", "npx", "pnpm", "yarn", "git", "python", "py", "tsc"],
+    permission: "sandbox",
+    allowedCommands: ["node", "npm", "npx", "pnpm", "yarn", "git", "python", "py", "tsc",
+                      "powershell", "pwsh", "cmd"],
     maxReadBytes: 524288, maxWriteBytes: 524288, maxOutputBytes: 65536, commandTimeoutMs: 180000,
   }, c);
   let dirty = false;
-  if (!out.token) { out.token = crypto.randomBytes(24).toString("hex"); dirty = true; }
+  /* ---- 一次性迁移（老 config.json 没有这些字段）----
+       已存在的 config.json 会【盖过】上面的默认值，所以不主动补的话，
+       升级后 PowerShell 仍不出现 —— 用户会以为改了没用。 */
+    if (!out.permission) { out.permission = "sandbox"; dirty = true; }
+    if (!Array.isArray(out.allowedCommands)) { out.allowedCommands = []; dirty = true; }
+    for (const sh of ["powershell", "pwsh", "cmd"]) {
+      if (!out.allowedCommands.includes(sh)) { out.allowedCommands.push(sh); dirty = true; }
+    }
+    if (!out.token) { out.token = crypto.randomBytes(24).toString("hex"); dirty = true; }
   if (!fs.existsSync(out.projectDir)) { try { fs.mkdirSync(out.projectDir, { recursive: true }); } catch (e) {} }
   if (dirty) fs.writeFileSync(CFG_FILE, JSON.stringify(out, null, 2) + "\n");
   return out;
@@ -109,18 +140,66 @@ try {
 /* ---------- 内置 MCP ---------- */
 function buildTools(log) {
   const R = path.resolve(cfg.projectDir);
-  const safe = (p) => { const a = path.resolve(R, String(p || ".")); if (a !== R && !a.startsWith(R + path.sep)) throw new Error("路径越界（只能访问项目目录）: " + p); return a; };
+  const tier = tierOf(cfg);
+    /* 沙箱档：路径锁在项目目录内。完全权限档：不锁，可访问整块磁盘。
+       读/写/列目录都走这里 —— 档位一改，三处边界同时变。 */
+    const safe = (p) => { const a = path.resolve(R, String(p || ".")); if (tier.confine && a !== R && !a.startsWith(R + path.sep)) throw new Error("路径越界（当前为「仅在沙箱」档，只能访问项目目录）: " + p); return a; };
   const rel = (a) => path.relative(R, a).split(path.sep).join("/") || ".";
   const raw = (v) => ({ content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }] });
   const walk = (d, o, dep) => { o = o || []; dep = dep || 0; if (dep > 14 || o.length > 5000) return o;
     let es; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return o; }
     for (const e of es) { if (SKIP.has(e.name)) continue; const f = path.join(d, e.name); if (e.isDirectory()) walk(f, o, dep + 1); else o.push(rel(f)); } return o; };
-  const which = (b) => { if (path.isAbsolute(b)) return b; const ex = process.platform === "win32" ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""];
-    for (const d of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) for (const x of ex) { const c = path.join(d, b + x); try { if (fs.statSync(c).isFile()) return c; } catch (e) {} } return null; };
+  /* 找可执行文件。
+     ── 为什么要单独处理 EACCES ──
+     Windows 的「应用执行别名」目录（...\AppData\Local\Microsoft\WindowsApps）
+     对 python.exe / py.exe 这类占位符会【拒绝 stat】，抛 EACCES。
+     而它偏偏在 PATH 里，且确实能 spawn 起来。
+     原来 catch(e){} 把 EACCES 一起吞了 → which("python") 返回 null
+     → run_command 报「找不到可执行文件: python」，实测就是这个原因。 */
+  const which = (b) => {
+    if (path.isAbsolute(b)) return b;
+    const ex = process.platform === "win32" ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""];
+    for (const d of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+      for (const x of ex) {
+        const c = path.join(d, b + x);
+        try { if (fs.statSync(c).isFile()) return c; }
+        catch (e) { if (e && e.code === "EACCES") return c; }   // 拒绝 stat 但可能仍可执行
+      }
+    }
+    return null;
+  };
+  /* PowerShell 在 Windows 默认按 ANSI 代码页输出，中文会乱码（实测：
+     "中文测试" 出来是 "????"）。这里给它套一层 UTF-8 前导；只动 powershell/pwsh，
+     且只设输出编码，不改其它行为。 */
+  const isPS = (b) => /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(String(b));
+  const psWrap = (bin, args) => {
+    const a = (args || []).slice();
+    if (!isPS(bin)) return a;
+    /* 永远补上 -NoProfile / -NonInteractive。
+       ── 为什么必须 ──
+       1) 用户 profile 会往 stdout 打自己的东西（实测本机打了句代理提示），
+          既污染输出，还在编码前导生效【之前】就写出乱码；
+       2) 参数不一定从 a[0] 开始（常见是 -NoProfile -Command …），
+          所以要在【整段】里找 -Command，而不是只看第一个 —— 这里返过一次工。 */
+    const low = a.map((x) => String(x).toLowerCase());
+    const head = [];
+    if (!low.some((x) => x === "-noprofile")) head.push("-NoProfile");
+    if (!low.some((x) => x === "-noninteractive")) head.push("-NonInteractive");
+    const ci = a.findIndex((x) => /^-(command|c)$/i.test(String(x)));
+    if (ci >= 0 && ci + 1 < a.length) { a[ci + 1] = PS_UTF8 + " " + a[ci + 1]; return head.concat(a); }
+    const fi = a.findIndex((x) => /^-(file|f)$/i.test(String(x)));
+    if (fi >= 0 && fi + 1 < a.length) {
+      const script = a[fi + 1], rest = a.slice(fi + 2);
+      return head.concat(["-Command", PS_UTF8 + " & '" + String(script).replace(/'/g, "''") + "'" + (rest.length ? " " + rest.join(" ") : "")]);
+    }
+    if (!a.length) return head.concat(["-Command", PS_UTF8]);
+    return head.concat(["-Command", PS_UTF8 + " " + a.join(" ")]);
+  };
   const run = (cmd, args, ms) => new Promise((res) => {
     const bin = which(cmd); if (!bin) return res({ code: null, stdout: "", stderr: "", note: "找不到可执行文件: " + cmd });
+    const argv = psWrap(bin, args);
     const shim = /\.(cmd|bat)$/i.test(bin);
-    const ch = spawn(shim ? "cmd.exe" : bin, shim ? ["/d", "/s", "/c", bin].concat(args) : args, { cwd: R, shell: false, windowsHide: true });
+    const ch = spawn(shim ? "cmd.exe" : bin, shim ? ["/d", "/s", "/c", bin].concat(argv) : argv, { cwd: R, shell: false, windowsHide: true });
     let o = "", e = "", done = false;
     const fin = (c, n) => { if (done) return; done = true; res({ code: c, note: n || null, stdout: o.slice(-cfg.maxOutputBytes), stderr: e.slice(-cfg.maxOutputBytes) }); };
     const t = setTimeout(() => { try { ch.kill(); } catch (x) {} fin(null, "超时"); }, ms);
@@ -130,7 +209,7 @@ function buildTools(log) {
 
   const T = [
     { name: "get_project_info", description: "获取项目根目录、权限与工具清单。建议第一步调用。", inputSchema: { type: "object", properties: {} },
-      handler: async () => raw({ projectDir: R, platform: process.platform, permissions: { read: true, write: !!cfg.allowWrite, exec: !!cfg.allowExec }, allowedCommands: cfg.allowExec ? cfg.allowedCommands : [] }) },
+      handler: async () => raw({ projectDir: R, platform: process.platform, permissionTier: tier.key, permissionTierLabel: tier.label, pathConfinedToProject: !!tier.confine, permissions: { read: true, write: !!cfg.allowWrite, exec: !!cfg.allowExec }, allowedCommands: (cfg.allowExec && tier.allowlist) ? cfg.allowedCommands : [] }) },
     { name: "list_files", description: "列出项目内所有文件。", inputSchema: { type: "object", properties: {} }, handler: async () => raw(walk(R).join("\n") || "(空目录)") },
     { name: "read_file", description: "读取项目内的文本文件。path 相对项目根目录。", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
       handler: async (a) => { const f = safe(a.path); if (fs.statSync(f).size > cfg.maxReadBytes) throw new Error("文件过大"); return raw(fs.readFileSync(f, "utf8")); } },
@@ -151,8 +230,13 @@ function buildTools(log) {
         fs.writeFileSync(f, bf.replace(a.old_string, a.new_string), "utf8"); log("修改 " + rel(f)); return raw({ ok: true, path: rel(f) }); } });
   }
   if (cfg.allowExec) {
-    T.push({ name: "run_command", description: "在项目目录执行命令（仅白名单）。", inputSchema: { type: "object", properties: { command: { type: "string" }, args: { type: "array", items: { type: "string" } } }, required: ["command"] },
-      handler: async (a) => { const n = String(a.command).replace(/\.(cmd|exe|bat)$/i, "").toLowerCase(); if (!cfg.allowedCommands.includes(n)) throw new Error("命令不在白名单内: " + a.command);
+    T.push({ name: "run_command", description: tier.allowlist ? "在项目目录执行命令（仅白名单）。" : "执行任意命令（完全权限档，不限制命令与路径）。", inputSchema: { type: "object", properties: { command: { type: "string" }, args: { type: "array", items: { type: "string" } } }, required: ["command"] },
+      handler: async (a) => {
+        const n = String(a.command).replace(/\.(cmd|exe|bat)$/i, "").toLowerCase();
+        /* 沙箱档才查白名单。完全权限档 = 用户明确要求"别拦我"，放行任意命令。
+           （PowerShell 已在白名单里，所以沙箱档也能跑它 —— 但那时白名单
+             只是便利清单，不是安全边界，面板上已照实标注。） */
+        if (tier.allowlist && !cfg.allowedCommands.includes(n)) throw new Error("命令不在白名单内（当前为「仅在沙箱」档）: " + a.command);
         log("执行 " + n + " " + (a.args || []).join(" ")); const r = await run(a.command, a.args || [], cfg.commandTimeoutMs);
         return raw({ exitCode: r.code, note: r.note, stdout: r.stdout, stderr: r.stderr }); } });
   }
@@ -381,6 +465,8 @@ function pushStatus() {
     win.webContents.send("bridge-status", {
       port: cfg.port, token: cfg.token, projectDir: cfg.projectDir,
       allowWrite: cfg.allowWrite, allowExec: cfg.allowExec,
+        permission: tierOf(cfg).key, permissionLabel: tierOf(cfg).label,
+        pathConfined: !!tierOf(cfg).confine, allowedCommands: cfg.allowedCommands,
       tools: mcpTools.map((t) => t.name), publicUrl, tunnelState,
       seedModels, stats: mcpStats, version: APP_VERSION,
     });
@@ -845,7 +931,10 @@ ipcMain.handle("bridge:set", (_e, patch) => {
     saveCfg();
     // 权限变了必须重建工具表 —— 否则新工具（比如 run_command）
     // 要等到下次启动才出现，用户会以为"开了没用"。
-    if ("allowExec" in patch || "allowWrite" in patch) {
+    /* 切到「完全权限」时，若执行还没开就顺手打开 ——
+       否则用户点了"完全权限"却发现命令仍跑不了，会以为按钮没生效。 */
+    if (patch.permission === "full" && cfg.allowExec !== true) cfg.allowExec = true;
+    if ("allowExec" in patch || "allowWrite" in patch || "permission" in patch) {
       try { mcpTools = buildTools(mcpLog); } catch (e) { say("重建工具表失败: " + e.message); }
     }
   }

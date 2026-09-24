@@ -15,7 +15,12 @@ const DEFAULTS = {
   projectDir: "",
   allowWrite: false,
   allowExec: false,
-  allowedCommands: ["node", "npm", "npx", "pnpm", "yarn", "git", "python", "py", "tsc", "go", "cargo", "make"],
+  // 权限档位：sandbox=路径锁项目内+命令白名单 / full=不限路径与命令。
+  // 桌面版面板上的两个档位按钮就是改这个字段（两边共用同一份 config.json）。
+  permission: "sandbox",
+  // 注意 powershell/pwsh/cmd 是 shell：它们进白名单后，白名单就不再是安全边界。
+  allowedCommands: ["node", "npm", "npx", "pnpm", "yarn", "git", "python", "py", "tsc", "go", "cargo", "make",
+                    "powershell", "pwsh", "cmd"],
   maxReadBytes: 524288,
   maxWriteBytes: 524288,
   maxOutputBytes: 65536,

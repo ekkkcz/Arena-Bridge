@@ -6,13 +6,24 @@ import { spawn } from "node:child_process";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", ".arena-bridge", "dist", "build", ".next", "__pycache__", ".venv"]);
 
+/* 权限档位：与桌面版保持同一套语义（共用 config.json）。 */
+const TIERS = {
+  sandbox: { key: "sandbox", label: "仅在沙箱", allowlist: true, confine: true },
+  full: { key: "full", label: "完全权限", allowlist: false, confine: false },
+};
+const tierOf = (c) => TIERS[(c && c.permission) === "full" ? "full" : "sandbox"];
+
+/* PowerShell 中文输出在 PS 5.1 + GBK 代码页下会乱码，套一层 UTF-8 前导。 */
+const PS_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;";
+
 export function createTools(cfg, log = () => {}) {
   const ROOT = path.resolve(cfg.projectDir);
+  const tier = tierOf(cfg);
 
   const safe = (p) => {
     const abs = path.resolve(ROOT, String(p || "."));
-    if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) {
-      throw new Error("路径越界（只能访问项目目录）: " + p);
+    if (tier.confine && abs !== ROOT && !abs.startsWith(ROOT + path.sep)) {
+      throw new Error("路径越界（当前为「仅在沙箱」档，只能访问项目目录）: " + p);
     }
     return abs;
   };
@@ -42,7 +53,9 @@ export function createTools(cfg, log = () => {}) {
     for (const d of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
       for (const ext of exts) {
         const c = path.join(d, bin + ext);
-        try { if (fs.statSync(c).isFile()) return c; } catch { /* 继续找 */ }
+        // EACCES 也要算命中：Windows 的「应用执行别名」（WindowsAppspython.exe）
+        // 会拒绝 stat，但能正常 spawn。原来吞掉 EACCES 就会误报「找不到 python」。
+        try { if (fs.statSync(c).isFile()) return c; } catch (e) { if (e && e.code === "EACCES") return c; }
       }
     }
     return null;
@@ -56,9 +69,35 @@ export function createTools(cfg, log = () => {}) {
         return;
       }
       const isShim = /\.(cmd|bat)$/i.test(bin);
+      // PowerShell 中文输出在 PS 5.1 + GBK 代码页下会乱码，套一层 UTF-8 前导。
+      const isPS = /(^|[\\/])(powershell|pwsh)(\.exe)?$/i.test(String(bin));
+      let argv = args || [];
+      if (isPS) {
+        // 永远补 -NoProfile/-NonInteractive：用户 profile 会污染 stdout，
+        // 且在编码前导之前就写出乱码。参数里可能不是 a[0] 就 -Command。
+        const low = argv.map((x) => String(x).toLowerCase());
+        const head = [];
+        if (!low.some((x) => x === "-noprofile")) head.push("-NoProfile");
+        if (!low.some((x) => x === "-noninteractive")) head.push("-NonInteractive");
+        const ci = argv.findIndex((x) => /^-(command|c)$/i.test(String(x)));
+        if (ci >= 0 && ci + 1 < argv.length) {
+          argv[ci + 1] = PS_UTF8 + " " + argv[ci + 1];
+          argv = head.concat(argv);
+        } else {
+          const fi = argv.findIndex((x) => /^-(file|f)$/i.test(String(x)));
+          if (fi >= 0 && fi + 1 < argv.length) {
+            const script = argv[fi + 1], rest = argv.slice(fi + 2);
+            argv = head.concat(["-Command", PS_UTF8 + " & '" + String(script).replace(/'/g, "''") + "'" + (rest.length ? " " + rest.join(" ") : "")]);
+          } else if (!argv.length) {
+            argv = head.concat(["-Command", PS_UTF8]);
+          } else {
+            argv = head.concat(["-Command", PS_UTF8 + " " + argv.join(" ")]);
+          }
+        }
+      }
       const child = spawn(
         isShim ? "cmd.exe" : bin,
-        isShim ? ["/d", "/s", "/c", bin, ...args] : args,
+        isShim ? ["/d", "/s", "/c", bin, ...argv] : argv,
         { cwd: ROOT, shell: false, windowsHide: true },
       );
       let out = "", err = "", done = false;
@@ -92,8 +131,11 @@ export function createTools(cfg, log = () => {}) {
         projectDir: ROOT,
         platform: os.platform(),
         node: process.version,
+        permissionTier: tier.key,
+        permissionTierLabel: tier.label,
+        pathConfinedToProject: !!tier.confine,
         permissions: { read: true, write: !!cfg.allowWrite, exec: !!cfg.allowExec },
-        allowedCommands: cfg.allowExec ? cfg.allowedCommands : [],
+        allowedCommands: (cfg.allowExec && tier.allowlist) ? cfg.allowedCommands : [],
       }),
     },
     {
@@ -200,8 +242,9 @@ export function createTools(cfg, log = () => {}) {
       },
       handler: async ({ command, args }) => {
         const name = String(command).replace(/\.(cmd|exe|bat)$/i, "").toLowerCase();
-        if (!cfg.allowedCommands.includes(name)) {
-          throw new Error("命令不在白名单内: " + command + "（允许: " + cfg.allowedCommands.join(", ") + "）");
+        // 沙箱档才查白名单；完全权限档不拦。
+        if (tier.allowlist && !cfg.allowedCommands.includes(name)) {
+          throw new Error("命令不在白名单内（当前为「仅在沙箱」档）: " + command + "（允许: " + cfg.allowedCommands.join(", ") + "）");
         }
         log("[exec] " + name + " " + (args || []).join(" "));
         const r = await runCmd(command, args || [], cfg.commandTimeoutMs);

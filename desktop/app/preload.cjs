@@ -314,6 +314,17 @@ function css(t) {
     "border:1px solid hsl(var(--ab-border));background:hsl(var(--ab-surface2));",
     "color:hsl(var(--ab-text2));user-select:none}",
     ".chip:hover{background:hsl(var(--ab-surface3))}",
+    /* 权限档位：两个互斥按钮。故意比 chip 显眼 ——
+       它管"边界有多大"，比读/写/执行那三个开关更要紧。 */
+    ".tiers{display:flex;gap:4px;margin:0 0 5px}",
+    ".tier{flex:1;text-align:center;font-size:10px;font-weight:650;padding:4px 6px;border-radius:6px;",
+    "cursor:pointer;user-select:none;border:1px solid hsl(var(--ab-border));",
+    "background:hsl(var(--ab-surface2));color:hsl(var(--ab-text2))}",
+    ".tier:hover{background:hsl(var(--ab-surface3))}",
+    ".tier.on{background:hsl(var(--ab-accent) / .22);border-color:hsl(var(--ab-accent) / .6);",
+    "color:hsl(var(--ab-warn))}",
+    ".tier.on.full{background:hsl(var(--ab-bad) / .16);border-color:hsl(var(--ab-bad) / .5);",
+    "color:hsl(var(--ab-bad))}",
     ".chip.on{background:hsl(var(--ab-accent) / .22);border-color:hsl(var(--ab-accent) / .6);",
     "color:hsl(var(--ab-warn))}",
     ".gsum{font-size:9.5px;color:hsl(var(--ab-muted));margin-top:6px;line-height:1.5}",
@@ -386,7 +397,9 @@ function build() {
       "</div>" +
 
       '<div class="sec"><div class="lbl" id="mlbl">MCP</div>' +
-        '<div class="chips" id="perms"></div>' +
+        '<div class="tiers" id="tiers"></div>' +
+          '<div class="chips" id="perms"></div>' +
+          '<div class="gsum" id="tierNote"></div>' +
         '<div class="url none" id="url">获取中\u2026</div>' +
         '<div class="gsum" id="stline"></div>' +
         '<button class="s" id="pdir">选择项目目录\u2026</button>' +
@@ -441,6 +454,23 @@ function build() {
     renameOn = localStorage.getItem(RENAME_KEY) === "1";
     $("rnChk").checked = renameOn;
   } catch (e) {}
+  // 权限档位：点一下就切（主进程会重建工具表）
+  $("tiers").addEventListener("click", (e) => {
+    const t = e.target && e.target.getAttribute && e.target.getAttribute("data-t");
+    if (!t) return;
+    const cur = (status && status.permission) || "sandbox";
+    if (t === cur) return;
+    if (t === "full" && !confirm(
+      "切到「完全权限」？\n\n" +
+      "· Agent 可以访问【整块磁盘】，不再限制在项目目录内\n" +
+      "· 不再限制命令（可执行任何程序，含 PowerShell）\n" +
+      "· 会同时打开「执行」权限\n\n" +
+      "只在信任当前这次任务时开。随时可点回「仅在沙箱」。")) return;
+    ipcRenderer.invoke("bridge:set", { permission: t });
+    log(t === "full" ? "已切到【完全权限】：不限路径与命令"
+                     : "已切到【仅在沙箱】：路径限项目内 + 命令白名单");
+  });
+
   // 权限开关：点一下就生效（主进程会重建工具表）
   $("perms").addEventListener("click", (e) => {
     const p = e.target && e.target.getAttribute && e.target.getAttribute("data-p");
@@ -1213,6 +1243,26 @@ function render() {
   setHTML(sh, "detail", d.join(""));
 
   /* ---- MCP 地址 ---- */
+  /* ---- 权限档位：一键切边界 ---- */
+  const tier = (status && status.permission) || "sandbox";
+  const isFull = tier === "full";
+  setHTML(sh, "tiers", status ? (
+    '<div class="tier' + (!isFull ? " on" : "") + '" data-t="sandbox" ' +
+      'title="路径锁在项目目录内；命令走白名单。日常改代码用这档就够">仅在沙箱</div>' +
+    '<div class="tier full' + (isFull ? " on full" : "") + '" data-t="full" ' +
+      'title="可访问整块磁盘，不再限制命令（含 PowerShell）。只在信任本次任务时开">完全权限</div>'
+  ) : "");
+  /* 沙箱档时把真实规则讲清楚：PowerShell 已在白名单里，所以白名单
+     不再是安全边界 —— 不写清楚就是给用户虚假的安全感。 */
+  const tierNote = !status ? "" :
+    (isFull ? "完全权限：不限制路径与命令"
+            : "仅在沙箱：路径限项目内 · 命令见白名单（含 powershell）");
+  setText(sh, "tierNote", tierNote);
+  if (sh.getElementById("tierNote")) {
+    const tn = sh.getElementById("tierNote");
+    tn.className = "gsum" + (isFull ? " bad" : "");
+  }
+
   /* ---- 权限标签：读永远开；写/执行可点 ---- */
   setHTML(sh, "perms", status ? (
     '<span class="chip on" title="读取：始终开启">读</span>' +

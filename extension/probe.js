@@ -36,10 +36,22 @@
      黑名单之外一律放行 —— 宁可留一点误报，也不把快速通道卡死（见下方 fastSourceOk 的说明）。
      注意：token 通道完全不受影响，仍然照常扫全量（token 自带 iss/pub/scopes 校验，不会误认）。 */
   var FAST_BAD = /(leaderboard|\/models?\b|model-list|catalog|history|conversations?|threads?|sidebar|search|\/rank\b|pricing|prices?|localStorage|sessionStorage)/i;
-  var FAST_GOOD = /(create-chat|\/stream|trigger\.dev|\/events\b|\/spans\b|\/api\/chat\/|messages|event-stream|\/agent)/i;
+  /* ── 坑 7 又回潮了：/api/chat/ 曾经被整段当成"本轮对话自己的流" ──
+     实测（2026-09-25，用户报"我是 opus-5，怎么检测到 gpt5.5"）：
+     打开一个对话时页面会拉 /api/chat/<id>/preview、/workspace/latest、/run-status，
+     这些响应里带着这个对话的【标题】。而本工具有"把对话标题改成模型名"的功能，
+     所以标题里就是模型名 —— 于是它被当成了"本轮模型"。
+     这不是猜的：日志里 405 次 token 全部来自【响应体流】，
+     只有 13 次来自实时会话；而且把改名的开关打开之后，标题就是模型名（65× gpt-5.6-sol…）。
+     结论：只有【本轮的流】能信。/api/chat/<id>/ 下的其它端点都是读历史。
+     另外补上 workspace/review-feedback/connectors/pulse/rum/logs 这些杂接口。 */
+  var FAST_GOOD = /(create-chat|\/stream|trigger\.dev|\/events\b|\/spans\b|messages|event-stream|\/agent)/i;
+  var FAST_CHAT_STREAM = /\/api\/chat\/[0-9a-f-]{36}\/(?:stream|message|messages|events?)\b/i;
   function fastSourceOk(where) {
     var w = String(where || "");
     if (FAST_BAD.test(w)) return false;   // 排行榜/历史/侧栏/模型目录 —— 一律不信
+    if (FAST_CHAT_STREAM.test(w)) return true;  // 本轮的流（不是 preview 之类读历史）
+    if (/\/api\/chat\//i.test(w)) return false; // 对话元数据端点：读的是标题/历史，不是本轮
     if (FAST_GOOD.test(w)) return true;   // 本轮对话自己的流
     /* 认不出来时【放行】，而不是拒绝。
        —— 这里和 token 通道的取舍相反，原因是有过一次很贵的返工：
@@ -1421,6 +1433,25 @@
     var t0 = Date.now();
     var report = { at: Date.now(), manual: !!manual, notes: [], token: false, runId: null,
                    model: null, fastModel: null, internalModel: null, ms: 0, reason: "" };
+
+    /* ── 先清掉【未经确认】的快速通道结果，重新从零认一次 ──
+       起因（2026-09-25 用户报）：面板上挂着 gpt-5.5，实际是 opus-5。
+       旧值的来源是"读历史的端点被快速通道采信"（已修，见 fastSourceOk）。
+       但光修来源不够 —— 那个错值已经写进 state.fastModel，
+       只要没有新一轮覆盖它，面板就会【一直】显示错的模型名。
+       所以手动检测的含义是"现在，重新判一次"：
+         · 已由 trace 确认的 state.model 不动（那是权威结果）；
+         · 未经确认的 fastModel / 档位清掉，重新计票重新认。
+       这样即使旧版本留下了错值，点一下就能回到干净状态。 */
+    if (!state.model) {
+      if (state.fastModel) report.notes.push("清掉未经确认的旧结果: " + state.fastModel);
+      state.fastModel = null;
+      state.tier = null;
+      state.internalModel = null;
+      state.internalTier = null;
+      nameVotes = Object.create(null);
+      votesAt = Date.now();
+    }
 
     function finish(reason) {
       detectStop();

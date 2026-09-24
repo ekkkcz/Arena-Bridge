@@ -278,6 +278,10 @@ function css(t) {
     ".more{margin-top:5px;font-size:10.5px;color:hsl(var(--ab-muted));cursor:pointer;",
     "user-select:none;display:inline-block}",
     ".more:hover{color:hsl(var(--ab-link))}",
+    /* 紧凑按钮行：用于「检测模型」这类要显眼、但又不该占满一行的动作。
+       以前它是个 .more 小文字链接，和「详情」挤在一起，用户根本找不到。 */
+    ".acts{display:flex;gap:6px;margin-top:7px}",
+    ".acts button{flex:1;margin:0;padding:6px 8px;font-size:11px;border-radius:7px}",
     ".detail{display:none}.detail.show{display:block}",
 
     ".url{font-family:var(--ab-font-mono,ui-monospace,Consolas,monospace);font-size:9.5px;",
@@ -387,9 +391,13 @@ function build() {
         '<div class="model none" id="model">尚未开始</div>' +
         '<div class="hint" id="mhint"></div>' +
         '<div id="pillWrap"></div>' +
-        '<span class="more" id="more">详情</span>' +
-        '<span class="more" id="detect" style="margin-left:10px" ' +
-          'title="立刻检测当前这个对话的模型。自动通道在切换对话、或只在旧对话里待着时会漏，这时点它。">检测模型</span>' +
+        /* 手动检测放在最显眼的位置：它是"自动没认出来"时的救命按钮，
+           不该和「改名 / 导出 trace」一起缩成角落里的小字链接。 */
+        '<div class="acts">' +
+          '<button class="s" id="detect" ' +
+            'title="立刻检测当前这个对话的模型。自动识别在切换对话、或只在旧对话里待着时会漏，这时点它。">检测模型</button>' +
+          '<button class="s" id="more" style="flex:0 0 68px">详情</button>' +
+        '</div>' +
         '<label class="gchk" style="margin-top:6px">' +
           '<input type="checkbox" id="rnChk">' +
           '<span>把对话标题改成模型名</span></label>' +

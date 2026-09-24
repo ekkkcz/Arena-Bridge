@@ -25,6 +25,28 @@
   var TRIGGER = "https://api.trigger.dev";
   /* 值得扫描的响应类型（白名单）。JWT 与模型名只可能出现在这些里。 */
   var WORTH_SCANNING = /^(?:text\/(?:event-stream|plain|x-component|html)|application\/(?:json|x-ndjson|ndjson))/i;
+  /* ── 快速通道的来源白名单（坑 7 的另一半）──
+     快速通道是"不等 token、直接从响应文本里认模型名"，它的问题是【不区分数据来源】：
+     只要一段 JSON/HTML 里出现像模型名的东西就投票。
+     实测（2026-09-23）：切一下【排行榜】页面，立刻报出 gemini-3.8-flash-low / gemini-omni-flash，
+     而那一轮连 token 都没拿到 —— 名字纯粹来自排行榜的模型目录，不是本轮抽到的模型。
+     更早的 claude-opus-4-8 连报 10 次也是同类（会话历史/侧栏）。
+
+     所以这里按 URL 判定：黑名单里的来源（排行榜/历史/侧栏/模型目录/存储）直接作废；
+     黑名单之外一律放行 —— 宁可留一点误报，也不把快速通道卡死（见下方 fastSourceOk 的说明）。
+     注意：token 通道完全不受影响，仍然照常扫全量（token 自带 iss/pub/scopes 校验，不会误认）。 */
+  var FAST_BAD = /(leaderboard|\/models?\b|model-list|catalog|history|conversations?|threads?|sidebar|search|\/rank\b|pricing|prices?|localStorage|sessionStorage)/i;
+  var FAST_GOOD = /(create-chat|\/stream|trigger\.dev|\/events\b|\/spans\b|\/api\/chat\/|messages|event-stream|\/agent)/i;
+  function fastSourceOk(where) {
+    var w = String(where || "");
+    if (FAST_BAD.test(w)) return false;   // 排行榜/历史/侧栏/模型目录 —— 一律不信
+    if (FAST_GOOD.test(w)) return true;   // 本轮对话自己的流
+    /* 认不出来时【放行】，而不是拒绝。
+       —— 这里和 token 通道的取舍相反，原因是有过一次很贵的返工：
+          早期把快速通道卡得太死，实测 24 分钟里 0 次命中（见投票表的注释）。
+       所以策略是"只拉黑确证会污染的来源"，宁可留一点误报也不废掉快速通道。 */
+    return true;
+  }
   /* 网络活动计数：用于区分"钩子没看到请求"与"看到了但没有 token" */
   var net = { seen: 0, byType: {}, tokenSeen: 0, gotHeaders: 0, lastUrl: "", lastCt: "" };
   var seen = Object.create(null);
@@ -579,6 +601,8 @@
       nc.scanMs = Math.round(net.scanTotalMs);
       nc.scanCalls = net.scanCalls;
       nc.skipped = net.skipped || 0;
+      nc.fastBlocked = net.fastBlocked || 0;
+      nc.fastBlockedWhere = net.fastBlockedWhere || "";
       nc.maxScanMs = Math.round(Math.max(net.maxScanMs || 0, nowMs() - t0));
     }
   }
@@ -640,6 +664,13 @@
   function scanForModelName(text, where) {
     if (!text || typeof text !== "string") return;
     if (state.model) return;                       // trace 已经确认了，不再听快速通道
+    /* ★ 来源必须可信。没有这一条，切排行榜 / 翻历史就会报出"本轮"根本不存在的模型名。
+       where 形如 "fetch.body:/nextjs-api/stream/create-chat"（URL 由钩子拼进来）。 */
+    if (!fastSourceOk(where)) {
+      net.fastBlocked = (net.fastBlocked || 0) + 1;
+      net.fastBlockedWhere = String(where || "").slice(0, 60);
+      return;
+    }
     MODEL_NAME_RE.lastIndex = 0;
     var m, n = 0, hits = Object.create(null);
     while ((m = MODEL_NAME_RE.exec(text)) !== null) {
@@ -750,17 +781,17 @@
       try {
         url = typeof req === "string" ? req : (req && req.url) || "";
         var b = init && init.body;
-        if (typeof b === "string") scan(b, "fetch.req");
+        if (typeof b === "string") scan(b, "fetch.req:" + shortUrl(url));
         try {
           var hh = (init && init.headers) || (req && req.headers);
           if (hh) {
             if (typeof hh.forEach === "function") hh.forEach(function (v, k) {
               var sv = String(v || "");
-              if (sv.indexOf("eyJ") === 0 || /public-access-token/i.test(String(k))) scan(sv, "fetch.req.header");
+              if (sv.indexOf("eyJ") === 0 || /public-access-token/i.test(String(k))) scan(sv, "fetch.req.header:" + shortUrl(url));
             });
             else for (var hk in hh) {
               var sv2 = String(hh[hk] || "");
-              if (sv2.indexOf("eyJ") === 0 || /public-access-token/i.test(hk)) scan(sv2, "fetch.req.header");
+              if (sv2.indexOf("eyJ") === 0 || /public-access-token/i.test(hk)) scan(sv2, "fetch.req.header:" + shortUrl(url));
             }
           }
         } catch (e) {}
@@ -780,7 +811,7 @@
             try { ct = String(res.headers.get("content-type") || ""); } catch (e) {}
             net.seen++;
             net.byType[ct.split(";")[0] || "?"] = (net.byType[ct.split(";")[0] || "?"] || 0) + 1;
-            scanHeaders(res.headers, "fetch.res.header");
+            scanHeaders(res.headers, "fetch.res.header:" + shortUrl(url));
             try { noteQuota(url, res); } catch (e) {}
             /* 只读可能含 token / 模型名的文本类响应。
                原来"任何响应都扫一遍"，把图片、字体、JS bundle 统统 clone 并读完 ——
@@ -800,10 +831,10 @@
               return;
             }
             var cl = res.clone();
-            if (cl.body && typeof cl.body.getReader === "function") streamScan(cl.body, "fetch.body");
+            if (cl.body && typeof cl.body.getReader === "function") streamScan(cl.body, "fetch.body:" + shortUrl(url));
             else cl.text().then(function (t) {
               if (t.length > MAX_SCAN_BYTES) return;
-              scan(t, "fetch.body.full");
+              scan(t, "fetch.body.full:" + shortUrl(url));
             }).catch(function () {});
           } catch (e) {}
         }).catch(function () {});
@@ -820,18 +851,18 @@
       var oo = XO.prototype.open, os = XO.prototype.send;
       XO.prototype.open = function (m, u) { this.__u = u; return oo.apply(this, arguments); };
       XO.prototype.send = function (b) {
-        try { if (typeof b === "string") scan(b, "xhr.req"); } catch (e) {}
+        try { if (typeof b === "string") scan(b, "xhr.req:" + shortUrl(this.__u)); } catch (e) {}
         var self = this;
         this.addEventListener("progress", function () {
           try {
             var now = Date.now();
             if (now - (self.__amp3T || 0) < 800) return;   // 节流：最多每 800ms 一次
             self.__amp3T = now;
-            if (self.responseText) scan(self.responseText.slice(-40000), "xhr.progress");
+            if (self.responseText) scan(self.responseText.slice(-40000), "xhr.progress:" + shortUrl(self.__u));
           } catch (e) {}
         });
         this.addEventListener("load", function () {
-          try { if (typeof self.responseText === "string") scan(self.responseText.slice(-200000), "xhr.load"); } catch (e) {}
+          try { if (typeof self.responseText === "string") scan(self.responseText.slice(-200000), "xhr.load:" + shortUrl(self.__u)); } catch (e) {}
         });
         return os.apply(this, arguments);
       };
@@ -844,7 +875,7 @@
     if (OE && !OE.__amp3) {
       var W = function (u, c) {
         var es = new OE(u, c);
-        try { es.addEventListener("message", function (ev) { scan(ev && ev.data, "es"); }); } catch (e) {}
+        try { es.addEventListener("message", function (ev) { scan(ev && ev.data, "es:" + shortUrl(u)); }); } catch (e) {}
         return es;
       };
       W.prototype = OE.prototype; W.__amp3 = 1;
@@ -858,7 +889,7 @@
     if (OW && !OW.__amp3) {
       var WS = function (u, p) {
         var ws = p === undefined ? new OW(u) : new OW(u, p);
-        try { ws.addEventListener("message", function (ev) { scan(ev && ev.data, "ws"); }); } catch (e) {}
+        try { ws.addEventListener("message", function (ev) { scan(ev && ev.data, "ws:" + shortUrl(u)); }); } catch (e) {}
         return ws;
       };
       WS.prototype = OW.prototype; WS.__amp3 = 1;

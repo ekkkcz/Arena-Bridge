@@ -9,3 +9,15 @@ app-preview-*.png
 *.mine-*
 probe.js.bak*
 *.bak-*
+# 临时/测试脚本与提交信息文件（_ 前缀）—— 别让它们混进提交（踩过两次）
+# 注意：_launch*.cmd / _restart.* / _stop.cmd / _multi.cmd / _multi-stop.ps1 是要入库的，
+# 所以不能简单地忽略 _*，只挡这几种。
+_commitmsg.txt
+_cmsg.txt
+_msg.txt
+_test-*.cjs
+_t-*.cjs
+_t-*.ps1
+_diag-*.cjs
+_scan-pii*.cjs
+_mcp-*.cjs
